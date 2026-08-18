@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Intersection Map is a browser-based composition field for arranging photographs into experimental editorial layouts."
+    />
+    <meta name="theme-color" content="#eaedf0" />
+    <title>intersection map / 01</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="rail">
+        <div class="rail-block masthead">
+          <p class="kicker">intersection map / 01</p>
+        </div>
+
+        <div class="rail-block meta">
+          <div class="meta-row">
+            <span>photos</span>
+            <span id="photoCount">0</span>
+          </div>
+          <div class="meta-row">
+            <span>composition</span>
+            <span id="compositionMode">free</span>
+          </div>
+          <div class="meta-row">
+            <span>anchor</span>
+            <span id="anchorLabel">none</span>
+          </div>
+          <button class="meta-row action-row" id="gridButton" type="button">
+            <span>grid</span>
+            <span id="gridLabel">12 × 9</span>
+          </button>
+          <button class="meta-row action-row" id="toneButton" type="button">
+            <span>tone</span>
+            <span id="toneLabel">soft</span>
+          </button>
+        </div>
+
+        <div class="rail-block controls">
+          <label class="control-row" for="densityRange">
+            <span>density</span>
+            <input id="densityRange" type="range" min="0" max="100" value="58" />
+          </label>
+          <label class="control-row" for="overlapRange">
+            <span>overlap</span>
+            <input id="overlapRange" type="range" min="0" max="100" value="68" />
+          </label>
+          <label class="control-row" for="variationRange">
+            <span>variation</span>
+            <input id="variationRange" type="range" min="0" max="100" value="62" />
+          </label>
+        </div>
+
+        <div class="rail-block format-block">
+          <div class="inspector-title">
+            <span>field</span>
+            <span id="canvasLabel">1600 × 1200</span>
+          </div>
+          <div class="size-grid">
+            <label class="size-input" for="canvasWidthInput">
+              <span>width</span>
+              <input id="canvasWidthInput" type="number" min="480" max="6000" step="10" inputmode="numeric" />
+            </label>
+            <label class="size-input" for="canvasHeightInput">
+              <span>height</span>
+              <input id="canvasHeightInput" type="number" min="480" max="6000" step="10" inputmode="numeric" />
+            </label>
+          </div>
+          <button class="text-action" id="applyCanvasSizeButton" type="button">apply size</button>
+        </div>
+
+        <div class="rail-block inspector" id="inspector">
+          <p class="empty-note">select a tile</p>
+        </div>
+      </aside>
+
+      <main class="stage">
+        <div class="stage-header">
+          <div class="stage-heading">
+            <p class="stage-kicker">workspace</p>
+            <p class="stage-subtitle">drop photographs directly onto the field or add them manually</p>
+          </div>
+          <div class="stage-actions">
+            <button class="text-action" id="uploadButton" type="button">add photos</button>
+            <button class="text-action" id="updateButton" type="button">update</button>
+            <button class="text-action" id="scatterButton" type="button">scatter</button>
+            <button class="text-action" id="mutateButton" type="button">mutate</button>
+            <button class="text-action" id="exportButton" type="button">export</button>
+          </div>
+        </div>
+        <p class="status-note stage-status" id="statusNote" aria-live="polite"></p>
+        <div class="stage-rule"></div>
+        <div class="workspace-layout">
+          <div class="workspace-frame">
+            <div class="workspace" id="workspace">
+              <button class="drop-overlay" id="dropOverlay" type="button">
+                <span class="drop-title">drop photos here</span>
+                <span class="drop-meta">or click to browse</span>
+              </button>
+              <div class="loading-overlay" id="loadingOverlay" aria-live="polite" aria-hidden="true">
+                <p class="loading-title" id="loadingTitle">preparing photos</p>
+                <p class="loading-meta" id="loadingMeta">working…</p>
+              </div>
+              <div class="empty-state" id="emptyState">
+                <p>Drop 10–30 photographs straight onto the grid.</p>
+                <p>Scatter builds an irregular composition from unlocked tiles.</p>
+              </div>
+            </div>
+          </div>
+          <aside class="layers-panel">
+              <div class="layers-header">
+                <p class="stage-kicker">layers</p>
+                <p class="layers-count" id="layerCount">0</p>
+              </div>
+            <p class="layers-note">Drag cards here to reorder depth. Click a card to select the photo.</p>
+            <div class="layers-list" id="layerList" aria-live="polite"></div>
+            <p class="empty-note layers-empty" id="layerEmpty">Hidden and overlapping photos will appear here.</p>
+          </aside>
+        </div>
+        <div class="stage-footnote" id="workspaceNote">
+          Double-click a selected tile to enter crop mode.
+        </div>
+      </main>
+    </div>
+
+    <input id="fileInput" type="file" accept="image/*" multiple hidden />
+    <input id="replaceInput" type="file" accept="image/*" hidden />
+
+    <script src="./app.js"></script>
+  </body>
+</html>
