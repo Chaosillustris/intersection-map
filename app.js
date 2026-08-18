@@ -1,6 +1,7 @@
 const storageKey = "intersection-map-settings-v1";
 const defaultCanvasSize = { width: 1600, height: 1200 };
 const canvasSizeLimits = { min: 480, max: 6000 };
+const dragGranularity = 0.25;
 const imageOptimization = {
   maxDimension: 2048,
   maxFileSizeBytes: 6 * 1024 * 1024,
@@ -628,6 +629,8 @@ function handleWorkspaceDoubleClick(event) {
 
 function beginDrag(tile, event) {
   const { colPx, rowPx } = getMetrics();
+  tile.zIndex = Math.max(...state.tiles.map((item) => item.zIndex), 0) + 1;
+  normalizeLayerOrder();
   state.interaction = {
     type: "drag",
     tileId: tile.id,
@@ -638,6 +641,8 @@ function beginDrag(tile, event) {
     colPx,
     rowPx,
   };
+  renderTile(tile, getMetrics());
+  renderLayerStrip();
 }
 
 function beginResize(tile, axis, event) {
@@ -677,12 +682,20 @@ function handlePointerMove(event) {
   }
 
   if (state.interaction.type === "drag") {
-    const dx = Math.round((event.clientX - state.interaction.startPointerX) / state.interaction.colPx);
-    const dy = Math.round((event.clientY - state.interaction.startPointerY) / state.interaction.rowPx);
-    tile.x = clamp(-tile.width + 1, state.interaction.startX + dx, getGrid().cols - 1);
-    tile.y = clamp(-tile.height + 1, state.interaction.startY + dy, getGrid().rows - 1);
+    const dx = (event.clientX - state.interaction.startPointerX) / state.interaction.colPx;
+    const dy = (event.clientY - state.interaction.startPointerY) / state.interaction.rowPx;
+    tile.x = clamp(
+      -tile.width + 1,
+      snapToStep(state.interaction.startX + dx, dragGranularity),
+      getGrid().cols - 1,
+    );
+    tile.y = clamp(
+      -tile.height + 1,
+      snapToStep(state.interaction.startY + dy, dragGranularity),
+      getGrid().rows - 1,
+    );
     tile.movedManually = true;
-    renderTilesOnly();
+    renderTile(tile);
     return;
   }
 
@@ -704,13 +717,13 @@ function handlePointerMove(event) {
     tile.resizedManually = true;
     tile.x = clamp(-tile.width + 1, tile.x, getGrid().cols - 1);
     tile.y = clamp(-tile.height + 1, tile.y, getGrid().rows - 1);
-    renderTilesOnly();
+    renderTile(tile);
     return;
   }
 
   if (state.interaction.type === "crop") {
     updateCropDrag(tile, event);
-    renderTilesOnly();
+    renderTile(tile);
   }
 }
 
@@ -1203,7 +1216,7 @@ function renderWorkspaceClasses() {
     : "working…";
   elements.workspaceNote.textContent = state.cropMode
     ? "Crop mode: drag inside the tile to reposition. Use the wheel to zoom. Press Esc to exit."
-    : "Drag photos onto the grid. Double-click a selected tile to enter crop mode.";
+    : "Drag photos onto the grid. Select a tile to pin it as anchor, or double-click it to crop.";
 }
 
 function setStatus(message, isError = false) {
@@ -1324,46 +1337,50 @@ function renderTilesOnly() {
   });
 
   for (const tile of sorted) {
-    const asset = getAsset(tile.assetId);
-    if (!asset) {
-      continue;
-    }
-
-    let tileEl = elements.workspace.querySelector(`[data-tile-id="${tile.id}"]`);
-    if (!tileEl) {
-      tileEl = buildTileElement(tile, asset);
-      elements.workspace.appendChild(tileEl);
-    }
-
-    tileEl.style.left = `${tile.x * metrics.colPx}px`;
-    tileEl.style.top = `${tile.y * metrics.rowPx}px`;
-    tileEl.style.width = `${tile.width * metrics.colPx}px`;
-    tileEl.style.height = `${tile.height * metrics.rowPx}px`;
-    tileEl.style.zIndex = String(tile.zIndex);
-    tileEl.classList.toggle("is-selected", tile.id === state.selectedId);
-    tileEl.classList.toggle("is-locked", tile.locked);
-    tileEl.classList.toggle("is-crop", state.cropMode && tile.id === state.selectedId);
-
-    const img = tileEl.querySelector("img");
-    img.src = asset.url;
-    img.alt = asset.name;
-    img.style.objectPosition = `${tile.cropX * 100}% ${tile.cropY * 100}%`;
-    img.style.transform = `scale(${tile.cropScale})`;
-
-    const badge = tileEl.querySelector(".tile-badge");
-    const badgeParts = [];
-    if (tile.isAnchor) {
-      badgeParts.push("anchor");
-    }
-    if (tile.locked) {
-      badgeParts.push("locked");
-    }
-    badge.textContent = badgeParts.join(" / ");
-    badge.hidden = badgeParts.length === 0;
-
-    const cropNote = tileEl.querySelector(".tile-crop-note");
-    cropNote.hidden = !(state.cropMode && tile.id === state.selectedId);
+    renderTile(tile, metrics);
   }
+}
+
+function renderTile(tile, metrics = getMetrics()) {
+  const asset = getAsset(tile.assetId);
+  if (!asset) {
+    return;
+  }
+
+  let tileEl = elements.workspace.querySelector(`[data-tile-id="${tile.id}"]`);
+  if (!tileEl) {
+    tileEl = buildTileElement(tile, asset);
+    elements.workspace.appendChild(tileEl);
+  }
+
+  tileEl.style.left = `${tile.x * metrics.colPx}px`;
+  tileEl.style.top = `${tile.y * metrics.rowPx}px`;
+  tileEl.style.width = `${tile.width * metrics.colPx}px`;
+  tileEl.style.height = `${tile.height * metrics.rowPx}px`;
+  tileEl.style.zIndex = String(tile.zIndex);
+  tileEl.classList.toggle("is-selected", tile.id === state.selectedId);
+  tileEl.classList.toggle("is-locked", tile.locked);
+  tileEl.classList.toggle("is-crop", state.cropMode && tile.id === state.selectedId);
+
+  const img = tileEl.querySelector("img");
+  img.src = asset.url;
+  img.alt = asset.name;
+  img.style.objectPosition = `${tile.cropX * 100}% ${tile.cropY * 100}%`;
+  img.style.transform = `scale(${tile.cropScale})`;
+
+  const badge = tileEl.querySelector(".tile-badge");
+  const badgeParts = [];
+  if (tile.isAnchor) {
+    badgeParts.push("anchor");
+  }
+  if (tile.locked) {
+    badgeParts.push("locked");
+  }
+  badge.textContent = badgeParts.join(" / ");
+  badge.hidden = badgeParts.length === 0;
+
+  const cropNote = tileEl.querySelector(".tile-crop-note");
+  cropNote.hidden = !(state.cropMode && tile.id === state.selectedId);
 }
 
 function buildTileElement(tile, asset) {
@@ -1403,19 +1420,30 @@ function renderInspector() {
   const tile = getSelectedTile();
 
   if (!tile) {
-    elements.inspector.innerHTML = `<p class="empty-note">select a tile</p>`;
+    elements.inspector.innerHTML = `
+      <p class="empty-note">select a tile</p>
+      <p class="empty-note inspector-note">Move, resize, crop, replace, lock, or pin one image as anchor. Anchor keeps that photo fixed while update or scatter arranges the rest around it.</p>
+    `;
     return;
   }
 
   const cropAction = state.cropMode ? "done" : "crop";
-  const anchorAction = tile.isAnchor ? "remove anchor" : "set as anchor";
+  const anchorAction = tile.isAnchor ? "release anchor" : "pin anchor";
   const lockAction = tile.locked ? "unlock" : "lock";
+  const roleLabel = tile.isAnchor ? "anchored tile" : "free tile";
+  const anchorCopy = tile.isAnchor
+    ? "This tile stays fixed when you press update or scatter."
+    : "Pin this tile as anchor to keep it fixed while the rest rearranges around it.";
 
   elements.inspector.innerHTML = `
     <div class="inspector-state">
       <div class="inspector-title">
         <span>selected</span>
         <span>${tile.label}</span>
+      </div>
+      <div class="inspector-row">
+        <span>role</span>
+        <span>${roleLabel}</span>
       </div>
       <div class="inspector-row">
         <span>size</span>
@@ -1435,6 +1463,7 @@ function renderInspector() {
       <button class="text-action inspector-action" data-action="anchor" type="button">${anchorAction}</button>
       <button class="text-action inspector-action" data-action="delete" type="button">delete</button>
     </div>
+    <p class="empty-note inspector-note">${anchorCopy}</p>
   `;
 
   elements.inspector.querySelectorAll("[data-action]").forEach((button) => {
@@ -1488,12 +1517,17 @@ function runInspectorAction(action) {
     if (tile.isAnchor) {
       tile.isAnchor = false;
       state.anchorId = null;
+      setStatus(`${tile.label} released. Scatter and update will move it normally again.`, false);
     } else {
       state.tiles.forEach((item) => {
         item.isAnchor = false;
       });
       tile.isAnchor = true;
       state.anchorId = tile.id;
+      setStatus(
+        `${tile.label} pinned as anchor. Update and scatter will keep it in place and arrange other photos around it.`,
+        false,
+      );
     }
     render();
     return;
@@ -1623,7 +1657,7 @@ async function exportComposition() {
   canvas.height = state.canvas.height;
   const ctx = canvas.getContext("2d");
 
-  ctx.fillStyle = "#ecece8";
+  ctx.fillStyle = getExportBackgroundColor();
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   const grid = getGrid();
@@ -1692,6 +1726,17 @@ function round(value, precision = 3) {
 
 function lerp(start, end, amount) {
   return start + (end - start) * amount;
+}
+
+function snapToStep(value, step) {
+  return round(Math.round(value / step) * step, 2);
+}
+
+function getExportBackgroundColor() {
+  const value = getComputedStyle(document.documentElement)
+    .getPropertyValue("--paper-alt")
+    .trim();
+  return value || "#edf0f2";
 }
 
 function randomInt(min, max) {
