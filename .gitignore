@@ -30,6 +30,7 @@ yarn-error.log*
 .env*
 
 /dist/
+/dist-static/
 /.wrangler/
 /outputs/
 /work/

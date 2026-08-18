@@ -21,6 +21,46 @@ async function text(locator) {
   return (await locator.textContent())?.trim() || "";
 }
 
+async function resizeSelectedTile(page) {
+  const selectedTile = page.locator(".tile.is-selected");
+  const dragVectors = [
+    { dx: 120, dy: 120 },
+    { dx: 84, dy: 148 },
+    { dx: 148, dy: 84 },
+  ];
+
+  for (const vector of dragVectors) {
+    const before = await selectedTile.boundingBox();
+    const overlayHandle = page.locator(".selection-overlay [data-handle='xy']");
+    const overlayHandleBox = await overlayHandle.boundingBox();
+    if (!before || !overlayHandleBox) {
+      return false;
+    }
+
+    await page.mouse.move(
+      overlayHandleBox.x + overlayHandleBox.width / 2,
+      overlayHandleBox.y + overlayHandleBox.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      overlayHandleBox.x + overlayHandleBox.width / 2 + vector.dx,
+      overlayHandleBox.y + overlayHandleBox.height / 2 + vector.dy,
+      { steps: 12 },
+    );
+    await page.mouse.up();
+
+    const after = await selectedTile.boundingBox();
+    if (
+      after &&
+      (after.width > before.width + 5 || after.height > before.height + 5)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 async function main() {
   const imageA = writeFixture(
     "intersection-map-a.png",
@@ -98,6 +138,7 @@ async function main() {
     await page.waitForFunction(
       () => /selected/i.test(document.getElementById("inspector")?.textContent || ""),
     );
+    const selectedTile = page.locator(".tile.is-selected");
 
     const beforeDrag = await firstTile.boundingBox();
     assert(beforeDrag, "Could not read tile bounding box before drag");
@@ -112,10 +153,33 @@ async function main() {
       "Tile drag did not move enough",
     );
 
+    let resized = await resizeSelectedTile(page);
+    if (!resized) {
+      await page.locator(".layer-card").nth(1).click();
+      resized = await resizeSelectedTile(page);
+    }
+    assert(resized, "Tile resize did not change size enough");
+
     await page.dblclick(".tile", { position: { x: 14, y: 14 } });
     await page.waitForFunction(
       () => /Crop mode:/i.test(document.getElementById("workspaceNote")?.textContent || ""),
     );
+    await page.waitForFunction(() => {
+      const inspector = document.getElementById("inspector")?.textContent || "";
+      const match = inspector.match(/crop\s+(\d+)%/i);
+      return match ? Number(match[1]) > 100 : false;
+    });
+    const cropPositionBefore = await selectedTile.locator("img").evaluate((node) => node.style.objectPosition);
+    const cropBox = await selectedTile.boundingBox();
+    assert(cropBox, "Could not read crop box");
+    await page.mouse.move(cropBox.x + cropBox.width / 2, cropBox.y + cropBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(cropBox.x + cropBox.width / 2, cropBox.y + cropBox.height / 2 + 24, {
+      steps: 8,
+    });
+    await page.mouse.up();
+    const cropPositionAfter = await selectedTile.locator("img").evaluate((node) => node.style.objectPosition);
+    assert(cropPositionAfter !== cropPositionBefore, "Crop drag did not update image position");
     await page.mouse.wheel(0, -240);
     await page.waitForFunction(
       () => /%/.test(document.getElementById("inspector")?.textContent || ""),
@@ -148,13 +212,21 @@ async function main() {
     await page.click('[data-action="lock"]');
     assert(/unlock/i.test(await text(page.locator('[data-action="lock"]'))), "Lock toggle failed");
 
-    const secondLayerTitle = await text(page.locator(".layer-card .layer-title").nth(1));
+    const topLayerTitleBefore = await text(page.locator(".layer-card .layer-title").first());
     await page.locator(".layer-card").nth(1).click();
-    const topLayerTitle = await text(page.locator(".layer-card .layer-title").first());
-    assert(topLayerTitle === secondLayerTitle, "Layer click did not surface tile");
+    assert(
+      await page.locator(".layer-card").nth(1).evaluate((node) => node.classList.contains("is-selected")),
+      "Layer click did not select tile",
+    );
+    const topLayerTitleAfterSelect = await text(page.locator(".layer-card .layer-title").first());
+    assert(topLayerTitleAfterSelect === topLayerTitleBefore, "Layer click should not surface tile");
 
-    await page.click('[data-action="back"]');
-    await page.click('[data-action="front"]');
+    await page.locator(".layer-card").nth(1).dragTo(page.locator(".layer-card").first());
+    await page.waitForFunction(
+      () => /Layer order updated/i.test(document.getElementById("statusNote")?.textContent || ""),
+    );
+    const promotedLayerTitle = await text(page.locator(".layer-card .layer-title").first());
+    assert(promotedLayerTitle !== topLayerTitleBefore, "Layer drag did not reorder the stack");
 
     const downloadPromise = page.waitForEvent("download");
     await page.click("#exportButton");

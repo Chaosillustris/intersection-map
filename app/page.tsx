@@ -124,7 +124,7 @@ export default function Home() {
                   0
                 </p>
               </div>
-              <p className="layers-note">Click a photo here to surface it above the stack.</p>
+              <p className="layers-note">Drag cards here to reorder depth. Click a card to select the photo.</p>
               <div className="layers-list" id="layerList" aria-live="polite"></div>
               <p className="empty-note layers-empty" id="layerEmpty">
                 Hidden and overlapping photos will appear here.
