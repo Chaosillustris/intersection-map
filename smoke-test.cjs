@@ -92,6 +92,13 @@ async function assertButtonsShareSingleRow(page, selectors, message) {
   assert(maxTop - minTop <= 4, message);
 }
 
+async function assertFileChooserOpens(page, triggerSelector, message) {
+  const chooserPromise = page.waitForEvent("filechooser", { timeout: 5000 }).catch(() => null);
+  await page.click(triggerSelector);
+  const chooser = await chooserPromise;
+  assert(chooser, message);
+}
+
 async function resizeSelectedTile(page) {
   const selectedTile = page.locator(".tile.is-selected");
   const dragVectors = [
@@ -206,9 +213,19 @@ async function main() {
     assert(await page.locator("#exportButton").isDisabled(), "Export should start disabled");
     assert(await page.locator("#clearButton").isDisabled(), "Clear all should start disabled");
     assert(
-      /^1\.0\.1$/.test((await text(page.locator("#appVersionLabel"))).replace(/^v/i, "")),
+      /^1\.0\.2$/.test((await text(page.locator("#appVersionLabel"))).replace(/^v/i, "")),
       "Version label did not render",
     );
+    assert(
+      (await page.locator("#uploadButton").evaluate((node) => node.tagName)) === "LABEL",
+      "Upload trigger should use a label for mobile-safe file picking",
+    );
+    assert(
+      !(await page.locator("#fileInput").evaluate((node) => node.hasAttribute("hidden"))),
+      "File input should remain available to its label trigger",
+    );
+    await assertFileChooserOpens(page, "#uploadButton", "Desktop upload trigger did not open file chooser");
+    await assertFileChooserOpens(page, "#dropOverlay", "Desktop drop overlay did not open file chooser");
 
     await page.locator("#fileInput").setInputFiles([imageA, imageB]);
     await page.waitForFunction(() => document.querySelectorAll(".tile").length === 2);
@@ -362,6 +379,16 @@ async function main() {
       mobilePage,
       ["#uploadButton", "#updateButton", "#scatterButton", "#mutateButton", "#exportButton", "#clearButton"],
       "Mobile action row wrapped unexpectedly",
+    );
+    await assertFileChooserOpens(
+      mobilePage,
+      "#uploadButton",
+      "Mobile upload trigger did not open file chooser",
+    );
+    await assertFileChooserOpens(
+      mobilePage,
+      "#dropOverlay",
+      "Mobile drop overlay did not open file chooser",
     );
     await mobilePage.locator("#fileInput").setInputFiles([imageA]);
     await mobilePage.waitForFunction(() => document.querySelectorAll(".tile").length === 1);

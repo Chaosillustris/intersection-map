@@ -8,7 +8,7 @@
       content="Intersection Map is a browser-based composition field for arranging photographs into experimental editorial layouts."
     />
     <meta name="theme-color" content="#eaedf0" />
-    <meta name="application-version" content="1.0.1" />
+    <meta name="application-version" content="1.0.2" />
     <title>intersection map / 01</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
@@ -17,7 +17,7 @@
       <aside class="rail">
         <div class="rail-block masthead">
           <p class="kicker">intersection map / 01</p>
-          <p class="version-tag">version <span id="appVersionLabel">1.0.1</span> <span id="appBuildLabel"></span></p>
+          <p class="version-tag">version <span id="appVersionLabel">1.0.2</span> <span id="appBuildLabel"></span></p>
         </div>
 
         <div class="rail-block meta">
@@ -88,7 +88,7 @@
             <p class="stage-subtitle">drop photographs directly onto the field or add them manually</p>
           </div>
           <div class="stage-actions">
-            <button class="text-action" id="uploadButton" type="button">add photos</button>
+            <label class="text-action upload-trigger" id="uploadButton" for="fileInput" role="button" tabindex="0">add photos</label>
             <button class="text-action" id="updateButton" type="button">update</button>
             <button class="text-action" id="scatterButton" type="button">scatter</button>
             <button class="text-action" id="mutateButton" type="button">mutate</button>
@@ -101,10 +101,10 @@
         <div class="workspace-layout">
           <div class="workspace-frame">
             <div class="workspace" id="workspace">
-              <button class="drop-overlay" id="dropOverlay" type="button">
+              <label class="drop-overlay" id="dropOverlay" for="fileInput" role="button" tabindex="0">
                 <span class="drop-title">drop photos here</span>
                 <span class="drop-meta">or click to browse</span>
-              </button>
+              </label>
               <div class="loading-overlay" id="loadingOverlay" aria-live="polite" aria-hidden="true">
                 <p class="loading-title" id="loadingTitle">preparing photos</p>
                 <p class="loading-meta" id="loadingMeta">working…</p>
@@ -131,8 +131,8 @@
       </main>
     </div>
 
-    <input id="fileInput" type="file" accept="image/*" multiple hidden />
-    <input id="replaceInput" type="file" accept="image/*" hidden />
+    <input id="fileInput" class="visually-hidden-input" type="file" accept="image/*" multiple />
+    <input id="replaceInput" class="visually-hidden-input" type="file" accept="image/*" />
 
     <script src="./version.js"></script>
     <script src="./app.js"></script>

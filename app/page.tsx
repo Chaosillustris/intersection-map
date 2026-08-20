@@ -6,7 +6,7 @@ export default function Home() {
           <div className="rail-block masthead">
             <p className="kicker">intersection map / 01</p>
             <p className="version-tag">
-              version <span id="appVersionLabel">1.0.1</span> <span id="appBuildLabel"></span>
+              version <span id="appVersionLabel">1.0.2</span> <span id="appBuildLabel"></span>
             </p>
           </div>
 
@@ -80,9 +80,9 @@ export default function Home() {
               <p className="stage-subtitle">drop photographs directly onto the field or add them manually</p>
             </div>
             <div className="stage-actions">
-              <button className="text-action" id="uploadButton" type="button">
+              <label className="text-action upload-trigger" id="uploadButton" htmlFor="fileInput" role="button" tabIndex={0}>
                 add photos
-              </button>
+              </label>
               <button className="text-action" id="updateButton" type="button">
                 update
               </button>
@@ -105,10 +105,10 @@ export default function Home() {
           <div className="workspace-layout">
             <div className="workspace-frame">
               <div className="workspace" id="workspace">
-                <button className="drop-overlay" id="dropOverlay" type="button">
+                <label className="drop-overlay" id="dropOverlay" htmlFor="fileInput" role="button" tabIndex={0}>
                   <span className="drop-title">drop photos here</span>
                   <span className="drop-meta">or click to browse</span>
-                </button>
+                </label>
                 <div className="loading-overlay" id="loadingOverlay" aria-live="polite" aria-hidden="true">
                   <p className="loading-title" id="loadingTitle">
                     preparing photos
@@ -143,8 +143,8 @@ export default function Home() {
         </main>
       </div>
 
-      <input id="fileInput" type="file" accept="image/*" multiple hidden />
-      <input id="replaceInput" type="file" accept="image/*" hidden />
+      <input id="fileInput" className="visually-hidden-input" type="file" accept="image/*" multiple />
+      <input id="replaceInput" className="visually-hidden-input" type="file" accept="image/*" />
       <script src="/version.js" defer></script>
       <script src="/app.js" defer></script>
     </>

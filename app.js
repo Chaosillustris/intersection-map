@@ -103,8 +103,8 @@ render();
 bindEvents();
 
 function bindEvents() {
-  elements.uploadButton.addEventListener("click", () => elements.fileInput.click());
-  elements.dropOverlay.addEventListener("click", () => elements.fileInput.click());
+  bindFilePickerTrigger(elements.uploadButton);
+  bindFilePickerTrigger(elements.dropOverlay);
   elements.fileInput.addEventListener("change", handleUpload);
   elements.replaceInput.addEventListener("change", handleReplace);
   elements.updateButton.addEventListener("click", refreshComposition);
@@ -132,6 +132,30 @@ function bindEvents() {
   window.addEventListener("pointercancel", endInteraction);
   window.addEventListener("resize", render);
   document.addEventListener("keydown", handleKeydown);
+}
+
+function bindFilePickerTrigger(element) {
+  if (!element) {
+    return;
+  }
+
+  element.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    openFilePicker();
+  });
+}
+
+function openFilePicker() {
+  if (typeof elements.fileInput.showPicker === "function") {
+    elements.fileInput.showPicker();
+    return;
+  }
+
+  elements.fileInput.click();
 }
 
 function loadSettings() {
