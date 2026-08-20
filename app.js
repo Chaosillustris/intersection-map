@@ -40,6 +40,7 @@ const elements = {
   scatterButton: document.getElementById("scatterButton"),
   mutateButton: document.getElementById("mutateButton"),
   exportButton: document.getElementById("exportButton"),
+  clearButton: document.getElementById("clearButton"),
   statusNote: document.getElementById("statusNote"),
   densityRange: document.getElementById("densityRange"),
   overlapRange: document.getElementById("overlapRange"),
@@ -49,9 +50,13 @@ const elements = {
   layerCount: document.getElementById("layerCount"),
   layerList: document.getElementById("layerList"),
   layerEmpty: document.getElementById("layerEmpty"),
+  appVersionLabel: document.getElementById("appVersionLabel"),
+  appBuildLabel: document.getElementById("appBuildLabel"),
   fileInput: document.getElementById("fileInput"),
   replaceInput: document.getElementById("replaceInput"),
 };
+
+const runtimeVersion = getRuntimeVersion();
 
 const savedSettings = loadSettings();
 
@@ -92,6 +97,7 @@ const state = {
 
 syncControlsFromState();
 syncCanvasInputs();
+renderRuntimeVersion();
 updateUploadLabel();
 render();
 bindEvents();
@@ -105,6 +111,7 @@ function bindEvents() {
   elements.scatterButton.addEventListener("click", () => scatter());
   elements.mutateButton.addEventListener("click", () => mutate());
   elements.exportButton.addEventListener("click", () => exportComposition());
+  elements.clearButton.addEventListener("click", clearComposition);
   elements.gridButton.addEventListener("click", cycleGrid);
   elements.toneButton.addEventListener("click", cycleToneMode);
   elements.applyCanvasSizeButton.addEventListener("click", applyCanvasSize);
@@ -148,6 +155,39 @@ function saveSettings() {
       canvasHeight: state.canvas.height,
     }),
   );
+}
+
+function getRuntimeVersion() {
+  const fallbackVersion =
+    document.querySelector('meta[name="application-version"]')?.getAttribute("content") || "dev";
+  const payload = window.__INTERSECTION_MAP_VERSION__ || {};
+  return {
+    version: payload.version || fallbackVersion,
+    builtAt: payload.builtAt || "",
+  };
+}
+
+function renderRuntimeVersion() {
+  if (elements.appVersionLabel) {
+    elements.appVersionLabel.textContent = runtimeVersion.version;
+  }
+  if (elements.appBuildLabel) {
+    elements.appBuildLabel.textContent = runtimeVersion.builtAt
+      ? `· ${formatBuildStamp(runtimeVersion.builtAt)}`
+      : "";
+  }
+}
+
+function formatBuildStamp(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date
+    .toISOString()
+    .replace("T", " ")
+    .replace(/\.\d{3}Z$/, " UTC");
 }
 
 function syncControlsFromState() {
@@ -1320,6 +1360,7 @@ function renderMeta() {
   elements.scatterButton.disabled = actionsDisabled;
   elements.mutateButton.disabled = actionsDisabled;
   elements.exportButton.disabled = actionsDisabled;
+  elements.clearButton.disabled = actionsDisabled;
   elements.updateButton.textContent = state.pendingRefresh ? "update *" : "update";
 }
 
@@ -1749,6 +1790,27 @@ function runInspectorAction(action) {
 
 function updateUploadLabel() {
   elements.uploadButton.textContent = state.tiles.length ? "add photos" : "add photos";
+}
+
+function clearComposition() {
+  if (!state.tiles.length && !state.assets.length) {
+    return;
+  }
+
+  state.assets.forEach((asset) => {
+    URL.revokeObjectURL(asset.url);
+  });
+  state.assets = [];
+  state.tiles = [];
+  state.selectedId = null;
+  state.anchorId = null;
+  state.cropMode = false;
+  state.replaceTileId = null;
+  state.pendingRefresh = false;
+  state.interaction = null;
+  updateUploadLabel();
+  render();
+  setStatus("Workspace cleared. Field size and controls were kept.", false);
 }
 
 function containsImageFiles(dataTransfer) {

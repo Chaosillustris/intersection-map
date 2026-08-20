@@ -5,6 +5,9 @@ export default function Home() {
         <aside className="rail">
           <div className="rail-block masthead">
             <p className="kicker">intersection map / 01</p>
+            <p className="version-tag">
+              version <span id="appVersionLabel">1.0.1</span> <span id="appBuildLabel"></span>
+            </p>
           </div>
 
           <div className="rail-block meta">
@@ -92,6 +95,9 @@ export default function Home() {
               <button className="text-action" id="exportButton" type="button">
                 export
               </button>
+              <button className="text-action" id="clearButton" type="button">
+                clear all
+              </button>
             </div>
           </div>
           <p className="status-note stage-status" id="statusNote" aria-live="polite"></p>
@@ -139,6 +145,7 @@ export default function Home() {
 
       <input id="fileInput" type="file" accept="image/*" multiple hidden />
       <input id="replaceInput" type="file" accept="image/*" hidden />
+      <script src="/version.js" defer></script>
       <script src="/app.js" defer></script>
     </>
   );

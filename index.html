@@ -8,6 +8,7 @@
       content="Intersection Map is a browser-based composition field for arranging photographs into experimental editorial layouts."
     />
     <meta name="theme-color" content="#eaedf0" />
+    <meta name="application-version" content="1.0.1" />
     <title>intersection map / 01</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
@@ -16,6 +17,7 @@
       <aside class="rail">
         <div class="rail-block masthead">
           <p class="kicker">intersection map / 01</p>
+          <p class="version-tag">version <span id="appVersionLabel">1.0.1</span> <span id="appBuildLabel"></span></p>
         </div>
 
         <div class="rail-block meta">
@@ -91,6 +93,7 @@
             <button class="text-action" id="scatterButton" type="button">scatter</button>
             <button class="text-action" id="mutateButton" type="button">mutate</button>
             <button class="text-action" id="exportButton" type="button">export</button>
+            <button class="text-action" id="clearButton" type="button">clear all</button>
           </div>
         </div>
         <p class="status-note stage-status" id="statusNote" aria-live="polite"></p>
@@ -131,6 +134,7 @@
     <input id="fileInput" type="file" accept="image/*" multiple hidden />
     <input id="replaceInput" type="file" accept="image/*" hidden />
 
+    <script src="./version.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

@@ -1,14 +1,72 @@
 const fs = require("fs");
+const http = require("http");
 const os = require("os");
 const path = require("path");
+const { URL } = require("url");
 const { chromium } = require("playwright");
-
-const url = "http://127.0.0.1:8000/";
 
 function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+function getContentType(filePath) {
+  const extension = path.extname(filePath).toLowerCase();
+  switch (extension) {
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".css":
+      return "text/css; charset=utf-8";
+    case ".js":
+    case ".mjs":
+      return "application/javascript; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    case ".ts":
+    case ".tsx":
+      return "text/plain; charset=utf-8";
+    case ".png":
+      return "image/png";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function startStaticServer(rootDir) {
+  const server = http.createServer((request, response) => {
+    const parsedUrl = new URL(request.url || "/", "http://127.0.0.1");
+    const relativePath = decodeURIComponent(parsedUrl.pathname === "/" ? "/index.html" : parsedUrl.pathname);
+    const resolvedPath = path.resolve(rootDir, `.${relativePath}`);
+
+    if (!resolvedPath.startsWith(rootDir)) {
+      response.writeHead(403);
+      response.end("Forbidden");
+      return;
+    }
+
+    fs.readFile(resolvedPath, (error, buffer) => {
+      if (error) {
+        response.writeHead(error.code === "ENOENT" ? 404 : 500);
+        response.end(error.code === "ENOENT" ? "Not found" : "Server error");
+        return;
+      }
+
+      response.writeHead(200, { "Content-Type": getContentType(resolvedPath) });
+      response.end(buffer);
+    });
+  });
+
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      resolve({
+        server,
+        url: `http://127.0.0.1:${address.port}/`,
+      });
+    });
+  });
 }
 
 function writeFixture(fileName, base64) {
@@ -21,6 +79,19 @@ async function text(locator) {
   return (await locator.textContent())?.trim() || "";
 }
 
+async function assertButtonsShareSingleRow(page, selectors, message) {
+  const tops = [];
+  for (const selector of selectors) {
+    const box = await page.locator(selector).boundingBox();
+    assert(box, `Missing bounding box for ${selector}`);
+    tops.push(Math.round(box.y));
+  }
+
+  const maxTop = Math.max(...tops);
+  const minTop = Math.min(...tops);
+  assert(maxTop - minTop <= 4, message);
+}
+
 async function resizeSelectedTile(page) {
   const selectedTile = page.locator(".tile.is-selected");
   const dragVectors = [
@@ -28,31 +99,55 @@ async function resizeSelectedTile(page) {
     { dx: 84, dy: 148 },
     { dx: 148, dy: 84 },
   ];
+  const handleSelectors = [
+    ".selection-overlay [data-handle='xy']",
+    ".tile.is-selected [data-handle='xy']",
+    ".selection-overlay [data-handle='x']",
+    ".selection-overlay [data-handle='y']",
+  ];
 
-  for (const vector of dragVectors) {
-    const before = await selectedTile.boundingBox();
-    const overlayHandle = page.locator(".selection-overlay [data-handle='xy']");
-    const overlayHandleBox = await overlayHandle.boundingBox();
-    if (!before || !overlayHandleBox) {
-      return false;
+  for (const handleSelector of handleSelectors) {
+    for (const vector of dragVectors) {
+      const before = await selectedTile.boundingBox();
+      const handleBox = await page.locator(handleSelector).boundingBox();
+      if (!before || !handleBox) {
+        continue;
+      }
+
+      await page.mouse.move(
+        handleBox.x + handleBox.width / 2,
+        handleBox.y + handleBox.height / 2,
+      );
+      await page.mouse.down();
+      await page.mouse.move(
+        handleBox.x + handleBox.width / 2 + vector.dx,
+        handleBox.y + handleBox.height / 2 + vector.dy,
+        { steps: 12 },
+      );
+      await page.mouse.up();
+
+      const after = await selectedTile.boundingBox();
+      if (
+        after &&
+        (after.width > before.width + 5 || after.height > before.height + 5)
+      ) {
+        return true;
+      }
     }
+  }
 
-    await page.mouse.move(
-      overlayHandleBox.x + overlayHandleBox.width / 2,
-      overlayHandleBox.y + overlayHandleBox.height / 2,
-    );
+  const edgeBefore = await selectedTile.boundingBox();
+  if (edgeBefore) {
+    await page.mouse.move(edgeBefore.x + edgeBefore.width - 2, edgeBefore.y + edgeBefore.height - 2);
     await page.mouse.down();
-    await page.mouse.move(
-      overlayHandleBox.x + overlayHandleBox.width / 2 + vector.dx,
-      overlayHandleBox.y + overlayHandleBox.height / 2 + vector.dy,
-      { steps: 12 },
-    );
+    await page.mouse.move(edgeBefore.x + edgeBefore.width + 96, edgeBefore.y + edgeBefore.height + 96, {
+      steps: 12,
+    });
     await page.mouse.up();
-
-    const after = await selectedTile.boundingBox();
+    const edgeAfter = await selectedTile.boundingBox();
     if (
-      after &&
-      (after.width > before.width + 5 || after.height > before.height + 5)
+      edgeAfter &&
+      (edgeAfter.width > edgeBefore.width + 5 || edgeAfter.height > edgeBefore.height + 5)
     ) {
       return true;
     }
@@ -62,6 +157,8 @@ async function resizeSelectedTile(page) {
 }
 
 async function main() {
+  const rootDir = path.resolve(__dirname);
+  const { server, url } = await startStaticServer(rootDir);
   const imageA = writeFixture(
     "intersection-map-a.png",
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn8j3cAAAAASUVORK5CYII=",
@@ -87,6 +184,7 @@ async function main() {
       "#scatterButton",
       "#mutateButton",
       "#exportButton",
+      "#clearButton",
       "#gridButton",
       "#toneButton",
       "#applyCanvasSizeButton",
@@ -96,10 +194,21 @@ async function main() {
       assert(await page.locator(selector).count(), `Missing control: ${selector}`);
     }
 
+    await assertButtonsShareSingleRow(
+      page,
+      ["#uploadButton", "#updateButton", "#scatterButton", "#mutateButton", "#exportButton", "#clearButton"],
+      "Desktop action row wrapped unexpectedly",
+    );
+
     assert(await page.locator("#updateButton").isDisabled(), "Update should start disabled");
     assert(await page.locator("#scatterButton").isDisabled(), "Scatter should start disabled");
     assert(await page.locator("#mutateButton").isDisabled(), "Mutate should start disabled");
     assert(await page.locator("#exportButton").isDisabled(), "Export should start disabled");
+    assert(await page.locator("#clearButton").isDisabled(), "Clear all should start disabled");
+    assert(
+      /^1\.0\.1$/.test((await text(page.locator("#appVersionLabel"))).replace(/^v/i, "")),
+      "Version label did not render",
+    );
 
     await page.locator("#fileInput").setInputFiles([imageA, imageB]);
     await page.waitForFunction(() => document.querySelectorAll(".tile").length === 2);
@@ -108,6 +217,7 @@ async function main() {
     );
 
     assert(!(await page.locator("#scatterButton").isDisabled()), "Scatter should enable after upload");
+    assert(!(await page.locator("#clearButton").isDisabled()), "Clear all should enable after upload");
     assert((await page.locator(".layer-card").count()) === 2, "Layer strip should list uploaded photos");
 
     const gridBefore = await text(page.locator("#gridLabel"));
@@ -239,9 +349,40 @@ async function main() {
     await page.click('[data-action="delete"]');
     await page.waitForFunction(() => document.querySelectorAll(".tile").length === 1);
 
+    await page.click("#clearButton");
+    await page.waitForFunction(() => document.querySelectorAll(".tile").length === 0);
+    await page.waitForFunction(
+      () => document.getElementById("photoCount")?.textContent?.trim() === "0",
+    );
+    assert(await page.locator("#clearButton").isDisabled(), "Clear all should disable after clearing");
+
+    const mobilePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await mobilePage.goto(url, { waitUntil: "domcontentloaded" });
+    await assertButtonsShareSingleRow(
+      mobilePage,
+      ["#uploadButton", "#updateButton", "#scatterButton", "#mutateButton", "#exportButton", "#clearButton"],
+      "Mobile action row wrapped unexpectedly",
+    );
+    await mobilePage.locator("#fileInput").setInputFiles([imageA]);
+    await mobilePage.waitForFunction(() => document.querySelectorAll(".tile").length === 1);
+    assert(
+      (await mobilePage.locator("#photoCount").textContent())?.trim() === "1",
+      "Mobile upload did not update photo count",
+    );
+    await mobilePage.close();
+
     console.log("smoke-test: ok");
   } finally {
     await browser.close();
+    await new Promise((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
   }
 }
 

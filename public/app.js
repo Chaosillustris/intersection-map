@@ -40,6 +40,7 @@ const elements = {
   scatterButton: document.getElementById("scatterButton"),
   mutateButton: document.getElementById("mutateButton"),
   exportButton: document.getElementById("exportButton"),
+  clearButton: document.getElementById("clearButton"),
   statusNote: document.getElementById("statusNote"),
   densityRange: document.getElementById("densityRange"),
   overlapRange: document.getElementById("overlapRange"),
@@ -49,9 +50,13 @@ const elements = {
   layerCount: document.getElementById("layerCount"),
   layerList: document.getElementById("layerList"),
   layerEmpty: document.getElementById("layerEmpty"),
+  appVersionLabel: document.getElementById("appVersionLabel"),
+  appBuildLabel: document.getElementById("appBuildLabel"),
   fileInput: document.getElementById("fileInput"),
   replaceInput: document.getElementById("replaceInput"),
 };
+
+const runtimeVersion = getRuntimeVersion();
 
 const savedSettings = loadSettings();
 
@@ -71,6 +76,12 @@ const state = {
     processed: 0,
     currentFile: "",
   },
+  layerDrag: {
+    sourceId: null,
+    targetId: null,
+    placement: "before",
+    suppressClickUntil: 0,
+  },
   pendingRefresh: false,
   canvas: getInitialCanvasSize(savedSettings),
   nextAssetId: 1,
@@ -86,6 +97,7 @@ const state = {
 
 syncControlsFromState();
 syncCanvasInputs();
+renderRuntimeVersion();
 updateUploadLabel();
 render();
 bindEvents();
@@ -99,6 +111,7 @@ function bindEvents() {
   elements.scatterButton.addEventListener("click", () => scatter());
   elements.mutateButton.addEventListener("click", () => mutate());
   elements.exportButton.addEventListener("click", () => exportComposition());
+  elements.clearButton.addEventListener("click", clearComposition);
   elements.gridButton.addEventListener("click", cycleGrid);
   elements.toneButton.addEventListener("click", cycleToneMode);
   elements.applyCanvasSizeButton.addEventListener("click", applyCanvasSize);
@@ -142,6 +155,39 @@ function saveSettings() {
       canvasHeight: state.canvas.height,
     }),
   );
+}
+
+function getRuntimeVersion() {
+  const fallbackVersion =
+    document.querySelector('meta[name="application-version"]')?.getAttribute("content") || "dev";
+  const payload = window.__INTERSECTION_MAP_VERSION__ || {};
+  return {
+    version: payload.version || fallbackVersion,
+    builtAt: payload.builtAt || "",
+  };
+}
+
+function renderRuntimeVersion() {
+  if (elements.appVersionLabel) {
+    elements.appVersionLabel.textContent = runtimeVersion.version;
+  }
+  if (elements.appBuildLabel) {
+    elements.appBuildLabel.textContent = runtimeVersion.builtAt
+      ? `· ${formatBuildStamp(runtimeVersion.builtAt)}`
+      : "";
+  }
+}
+
+function formatBuildStamp(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date
+    .toISOString()
+    .replace("T", " ")
+    .replace(/\.\d{3}Z$/, " UTC");
 }
 
 function syncControlsFromState() {
@@ -216,6 +262,10 @@ function handleControlInput() {
   state.pendingRefresh = true;
   saveSettings();
   renderMeta();
+  setStatus(
+    `Density ${describeControlLevel(state.controls.density)}, overlap ${describeControlLevel(state.controls.overlap)}, variation ${describeControlLevel(state.controls.variation)}. Press update to reflow the composition.`,
+    false,
+  );
 }
 
 async function handleUpload(event) {
@@ -556,19 +606,13 @@ function getSelectedTile() {
   return state.selectedId ? getTile(state.selectedId) : null;
 }
 
-function setSelectedTile(tileId, options = {}) {
+function setSelectedTile(tileId) {
   state.selectedId = tileId ? Number(tileId) : null;
   if (!state.selectedId) {
     state.cropMode = false;
   }
-  if (options.bringToFront && state.selectedId) {
-    const tile = getTile(state.selectedId);
-    if (tile) {
-      tile.zIndex = Math.max(...state.tiles.map((item) => item.zIndex), 0) + 1;
-      normalizeLayerOrder();
-    }
-  }
   renderTilesOnly();
+  renderSelectionOverlay();
   renderInspector();
   renderWorkspaceClasses();
   renderLayerStrip();
@@ -576,6 +620,15 @@ function setSelectedTile(tileId, options = {}) {
 
 function handleWorkspacePointerDown(event) {
   if (event.target === elements.dropOverlay) {
+    return;
+  }
+
+  const overlayHandle = event.target.closest(".selection-overlay [data-handle]")?.dataset.handle || null;
+  if (overlayHandle) {
+    const selectedTile = getSelectedTile();
+    if (selectedTile && !selectedTile.locked && !state.cropMode) {
+      beginResize(selectedTile, overlayHandle, event);
+    }
     return;
   }
 
@@ -592,7 +645,7 @@ function handleWorkspacePointerDown(event) {
 
   setSelectedTile(tile.id);
 
-  const handle = event.target.closest("[data-handle]")?.dataset.handle || null;
+  const handle = detectResizeHandle(tileEl, event);
   const canMove = !tile.locked;
 
   if (handle && canMove && !state.cropMode) {
@@ -622,15 +675,39 @@ function handleWorkspaceDoubleClick(event) {
   }
 
   setSelectedTile(tile.id);
+  ensureCropFreedom(tile);
   state.cropMode = true;
   renderWorkspaceClasses();
   renderInspector();
 }
 
+function detectResizeHandle(tileEl, event) {
+  const explicitHandle = event.target.closest("[data-handle]")?.dataset.handle || null;
+  if (explicitHandle) {
+    return explicitHandle;
+  }
+
+  const rect = tileEl.getBoundingClientRect();
+  const edgeThreshold = 16;
+  const distanceRight = rect.right - event.clientX;
+  const distanceBottom = rect.bottom - event.clientY;
+  const nearRight = distanceRight >= 0 && distanceRight <= edgeThreshold;
+  const nearBottom = distanceBottom >= 0 && distanceBottom <= edgeThreshold;
+
+  if (nearRight && nearBottom) {
+    return "xy";
+  }
+  if (nearRight) {
+    return "x";
+  }
+  if (nearBottom) {
+    return "y";
+  }
+  return null;
+}
+
 function beginDrag(tile, event) {
   const { colPx, rowPx } = getMetrics();
-  tile.zIndex = Math.max(...state.tiles.map((item) => item.zIndex), 0) + 1;
-  normalizeLayerOrder();
   state.interaction = {
     type: "drag",
     tileId: tile.id,
@@ -640,9 +717,8 @@ function beginDrag(tile, event) {
     startY: tile.y,
     colPx,
     rowPx,
+    hasMoved: false,
   };
-  renderTile(tile, getMetrics());
-  renderLayerStrip();
 }
 
 function beginResize(tile, axis, event) {
@@ -661,6 +737,7 @@ function beginResize(tile, axis, event) {
 }
 
 function beginCropDrag(tile, event) {
+  ensureCropFreedom(tile);
   state.interaction = {
     type: "crop",
     tileId: tile.id,
@@ -682,6 +759,14 @@ function handlePointerMove(event) {
   }
 
   if (state.interaction.type === "drag") {
+    const pointerDistance = Math.hypot(
+      event.clientX - state.interaction.startPointerX,
+      event.clientY - state.interaction.startPointerY,
+    );
+    if (!state.interaction.hasMoved && pointerDistance < 4) {
+      return;
+    }
+    state.interaction.hasMoved = true;
     const dx = (event.clientX - state.interaction.startPointerX) / state.interaction.colPx;
     const dy = (event.clientY - state.interaction.startPointerY) / state.interaction.rowPx;
     tile.x = clamp(
@@ -696,6 +781,7 @@ function handlePointerMove(event) {
     );
     tile.movedManually = true;
     renderTile(tile);
+    renderSelectionOverlay();
     return;
   }
 
@@ -718,12 +804,14 @@ function handlePointerMove(event) {
     tile.x = clamp(-tile.width + 1, tile.x, getGrid().cols - 1);
     tile.y = clamp(-tile.height + 1, tile.y, getGrid().rows - 1);
     renderTile(tile);
+    renderSelectionOverlay();
     return;
   }
 
   if (state.interaction.type === "crop") {
     updateCropDrag(tile, event);
     renderTile(tile);
+    renderSelectionOverlay();
   }
 }
 
@@ -1017,6 +1105,8 @@ function layoutTiles(targetIds) {
   const freeClusters = createClusters(cols, rows, density);
   const toneClusters = toneStrength ? createToneClusters(cols, rows, density) : [];
   let zBase = 1;
+  const zStep = Math.max(1, Math.round(lerp(4, 1, overlap)));
+  const zJitter = Math.max(2, Math.round(lerp(2, 7, overlap)));
 
   const sortedTargets = toneStrength
     ? [...targets].sort((left, right) => getTileToneValue(left) - getTileToneValue(right))
@@ -1033,10 +1123,10 @@ function layoutTiles(targetIds) {
 
     tile.x = pos.x;
     tile.y = pos.y;
-    tile.zIndex = zBase + randomInt(-3, 3);
+    tile.zIndex = zBase + randomInt(-zJitter, zJitter);
     tile.movedManually = false;
     tile.resizedManually = false;
-    zBase += 2;
+    zBase += zStep;
   }
 
   if (anchor && !anchor.locked) {
@@ -1053,7 +1143,7 @@ function layoutTiles(targetIds) {
 }
 
 function pickTileSize(cols, rows, density, variation, isAnchor) {
-  const areaScale = lerp(0.82, 1.22, density);
+  const areaScale = lerp(0.66, 1.42, density);
 
   if (isAnchor) {
     const width = clamp(
@@ -1074,20 +1164,20 @@ function pickTileSize(cols, rows, density, variation, isAnchor) {
   let height;
 
   if (mode < 0.22 + variation * 0.14) {
-    width = randomInt(1, variation > 0.55 ? 2 : 3);
-    height = randomInt(Math.max(3, Math.round(rows * 0.34)), Math.max(4, Math.round(rows * 0.78)));
+    width = randomInt(1, variation > 0.5 ? 2 : 3);
+    height = randomInt(Math.max(3, Math.round(rows * 0.28)), Math.max(4, Math.round(rows * 0.88)));
   } else if (mode < 0.44 + variation * 0.1) {
-    width = randomInt(Math.max(3, Math.round(cols * 0.34)), Math.max(4, Math.round(cols * 0.78)));
-    height = randomInt(1, variation > 0.55 ? 2 : 3);
+    width = randomInt(Math.max(3, Math.round(cols * 0.28)), Math.max(4, Math.round(cols * 0.88)));
+    height = randomInt(1, variation > 0.5 ? 2 : 3);
   } else if (mode < 0.64) {
-    width = randomInt(2, 4);
-    height = randomInt(2, 4);
+    width = randomInt(2, variation > 0.55 ? 5 : 4);
+    height = randomInt(2, variation > 0.55 ? 5 : 4);
   } else if (mode < 0.87) {
-    width = randomInt(3, Math.min(6, cols - 1));
-    height = randomInt(3, Math.min(6, rows - 1));
+    width = randomInt(3, Math.min(7, cols - 1));
+    height = randomInt(3, Math.min(7, rows - 1));
   } else {
-    width = randomInt(Math.max(4, Math.round(cols * 0.28)), Math.max(5, Math.round(cols * 0.54)));
-    height = randomInt(Math.max(3, Math.round(rows * 0.28)), Math.max(4, Math.round(rows * 0.54)));
+    width = randomInt(Math.max(4, Math.round(cols * 0.22)), Math.max(5, Math.round(cols * 0.62)));
+    height = randomInt(Math.max(3, Math.round(rows * 0.22)), Math.max(4, Math.round(rows * 0.62)));
   }
 
   width = clamp(1, Math.round(width * areaScale), cols);
@@ -1102,7 +1192,7 @@ function pickTileSize(cols, rows, density, variation, isAnchor) {
 }
 
 function createClusters(cols, rows, density) {
-  const count = clamp(2, Math.round(2 + density * 3), 5);
+  const count = clamp(2, Math.round(1 + density * 5), 6);
   return Array.from({ length: count }, () => ({
     x: randomFloat(cols * 0.12, cols * 0.88),
     y: randomFloat(rows * 0.12, rows * 0.88),
@@ -1129,9 +1219,9 @@ function placeInFreeMode(tile, clusters, toneClusters, cols, rows, overlap, dens
   const spreadFactor = useToneCluster ? lerp(1.1, 0.58, toneStrength) : 1;
   const contrastFactor = 1 + getTileToneContrast(tile) * 0.45;
   const spreadX =
-    lerp(cols * 0.62, cols * 0.22, overlap) * lerp(1.1, 0.85, density) * spreadFactor * contrastFactor;
+    lerp(cols * 0.94, cols * 0.12, overlap) * lerp(1.2, 0.62, density) * spreadFactor * contrastFactor;
   const spreadY =
-    lerp(rows * 0.62, rows * 0.24, overlap) * lerp(1.1, 0.85, density) * spreadFactor;
+    lerp(rows * 0.92, rows * 0.14, overlap) * lerp(1.18, 0.66, density) * spreadFactor;
   const x = Math.round(cluster.x - tile.width / 2 + randomFloat(-spreadX, spreadX));
   const y = Math.round(cluster.y - tile.height / 2 + randomFloat(-spreadY, spreadY));
   return {
@@ -1156,10 +1246,16 @@ function placeAroundAnchor(tile, anchor, cols, rows, overlap, density, toneStren
   const toneValue = getTileToneValue(tile);
   const toneBias = toneStrength ? (toneValue - 0.5) * 2 : 0;
   const offsetX = local
-    ? randomFloat(-(anchor.width * 0.72 + cols * (0.26 - overlap * 0.12)), anchor.width * 0.82 + cols * (0.18 - overlap * 0.06))
+    ? randomFloat(
+        -(anchor.width * 0.84 + cols * (0.36 - overlap * 0.22)),
+        anchor.width * 0.92 + cols * (0.26 - overlap * 0.12),
+      )
     : randomFloat(-cols * 0.52, cols * 0.52);
   const offsetY = local
-    ? randomFloat(-(anchor.height * 0.72 + rows * (0.22 - overlap * 0.08)), anchor.height * 0.88 + rows * (0.22 - overlap * 0.08))
+    ? randomFloat(
+        -(anchor.height * 0.82 + rows * (0.3 - overlap * 0.14)),
+        anchor.height * 0.94 + rows * (0.28 - overlap * 0.1),
+      )
     : randomFloat(-rows * 0.45, rows * 0.45);
 
   const x = Math.round(
@@ -1182,6 +1278,16 @@ function placeAroundAnchor(tile, anchor, cols, rows, overlap, density, toneStren
   };
 }
 
+function describeControlLevel(value) {
+  if (value < 34) {
+    return "low";
+  }
+  if (value < 67) {
+    return "mid";
+  }
+  return "high";
+}
+
 function normalizeLayerOrder() {
   state.tiles
     .sort((a, b) => a.zIndex - b.zIndex)
@@ -1194,6 +1300,7 @@ function render() {
   renderWorkspaceClasses();
   renderMeta();
   renderTilesOnly();
+  renderSelectionOverlay();
   renderInspector();
   renderLayerStrip();
 }
@@ -1253,6 +1360,7 @@ function renderMeta() {
   elements.scatterButton.disabled = actionsDisabled;
   elements.mutateButton.disabled = actionsDisabled;
   elements.exportButton.disabled = actionsDisabled;
+  elements.clearButton.disabled = actionsDisabled;
   elements.updateButton.textContent = state.pendingRefresh ? "update *" : "update";
 }
 
@@ -1276,8 +1384,14 @@ function renderLayerStrip() {
     button.type = "button";
     button.className = "layer-card";
     button.dataset.tileId = String(tile.id);
-    button.title = `Surface ${tile.label}`;
+    button.title = `Select ${tile.label}`;
+    button.draggable = true;
     button.classList.toggle("is-selected", tile.id === state.selectedId);
+
+    const grip = document.createElement("span");
+    grip.className = "layer-grip";
+    grip.setAttribute("aria-hidden", "true");
+    grip.textContent = "||";
 
     const thumbWrap = document.createElement("span");
     thumbWrap.className = "layer-thumb-wrap";
@@ -1317,12 +1431,110 @@ function renderLayerStrip() {
     flags.hidden = !flags.textContent;
 
     copy.append(titleRow, meta, flags);
-    button.append(thumbWrap, copy);
-    button.addEventListener("click", () => setSelectedTile(tile.id, { bringToFront: true }));
+    button.append(grip, thumbWrap, copy);
+    button.addEventListener("click", () => {
+      if (performance.now() < state.layerDrag.suppressClickUntil) {
+        return;
+      }
+      setSelectedTile(tile.id);
+    });
+    button.addEventListener("dragstart", (event) => handleLayerDragStart(tile.id, event));
+    button.addEventListener("dragover", (event) => handleLayerDragOver(tile.id, event));
+    button.addEventListener("drop", (event) => handleLayerDrop(tile.id, event));
+    button.addEventListener("dragend", handleLayerDragEnd);
     fragment.appendChild(button);
   });
 
   elements.layerList.appendChild(fragment);
+  refreshLayerDragState();
+}
+
+function handleLayerDragStart(tileId, event) {
+  state.layerDrag.sourceId = tileId;
+  state.layerDrag.targetId = null;
+  state.layerDrag.placement = "before";
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", String(tileId));
+  }
+  refreshLayerDragState();
+}
+
+function handleLayerDragOver(tileId, event) {
+  if (!state.layerDrag.sourceId || state.layerDrag.sourceId === tileId) {
+    return;
+  }
+  event.preventDefault();
+  const rect = event.currentTarget.getBoundingClientRect();
+  const placement = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+  if (state.layerDrag.targetId !== tileId || state.layerDrag.placement !== placement) {
+    state.layerDrag.targetId = tileId;
+    state.layerDrag.placement = placement;
+    refreshLayerDragState();
+  }
+}
+
+function handleLayerDrop(tileId, event) {
+  if (!state.layerDrag.sourceId) {
+    return;
+  }
+  event.preventDefault();
+  const sourceId = state.layerDrag.sourceId;
+  const { placement } = state.layerDrag;
+  finishLayerDrag();
+  if (sourceId === tileId) {
+    setSelectedTile(sourceId);
+    return;
+  }
+  reorderLayerStack(sourceId, tileId, placement);
+  setSelectedTile(sourceId);
+  setStatus(`Layer order updated. ${getTile(sourceId)?.label || "Selected image"} moved in the stack.`, false);
+}
+
+function handleLayerDragEnd() {
+  finishLayerDrag();
+}
+
+function finishLayerDrag() {
+  state.layerDrag.sourceId = null;
+  state.layerDrag.targetId = null;
+  state.layerDrag.placement = "before";
+  state.layerDrag.suppressClickUntil = performance.now() + 180;
+  refreshLayerDragState();
+}
+
+function reorderLayerStack(sourceId, targetId, placement) {
+  const ordered = [...state.tiles].sort((left, right) => right.zIndex - left.zIndex);
+  const sourceIndex = ordered.findIndex((tile) => tile.id === sourceId);
+  const targetIndex = ordered.findIndex((tile) => tile.id === targetId);
+  if (sourceIndex === -1 || targetIndex === -1) {
+    return;
+  }
+
+  const [sourceTile] = ordered.splice(sourceIndex, 1);
+  const insertionIndex = ordered.findIndex((tile) => tile.id === targetId) + (placement === "after" ? 1 : 0);
+  ordered.splice(insertionIndex, 0, sourceTile);
+
+  ordered.forEach((tile, index) => {
+    tile.zIndex = ordered.length - index;
+  });
+
+  render();
+}
+
+function refreshLayerDragState() {
+  Array.from(elements.layerList.querySelectorAll(".layer-card")).forEach((card) => {
+    const tileId = Number(card.dataset.tileId);
+    card.classList.toggle("is-dragging", tileId === state.layerDrag.sourceId);
+    card.classList.toggle(
+      "is-drop-before",
+      tileId === state.layerDrag.targetId && state.layerDrag.placement === "before",
+    );
+    card.classList.toggle(
+      "is-drop-after",
+      tileId === state.layerDrag.targetId && state.layerDrag.placement === "after",
+    );
+  });
 }
 
 function renderTilesOnly() {
@@ -1339,6 +1551,29 @@ function renderTilesOnly() {
   for (const tile of sorted) {
     renderTile(tile, metrics);
   }
+}
+
+function renderSelectionOverlay(metrics = getMetrics()) {
+  const tile = getSelectedTile();
+  let overlay = elements.workspace.querySelector(".selection-overlay");
+
+  if (!tile) {
+    overlay?.remove();
+    return;
+  }
+
+  if (!overlay) {
+    overlay = buildSelectionOverlay();
+    elements.workspace.appendChild(overlay);
+  }
+
+  overlay.hidden = false;
+  overlay.style.left = `${tile.x * metrics.colPx}px`;
+  overlay.style.top = `${tile.y * metrics.rowPx}px`;
+  overlay.style.width = `${tile.width * metrics.colPx}px`;
+  overlay.style.height = `${tile.height * metrics.rowPx}px`;
+  overlay.classList.toggle("is-locked", tile.locked);
+  overlay.classList.toggle("is-crop", state.cropMode && tile.id === state.selectedId);
 }
 
 function renderTile(tile, metrics = getMetrics()) {
@@ -1381,6 +1616,26 @@ function renderTile(tile, metrics = getMetrics()) {
 
   const cropNote = tileEl.querySelector(".tile-crop-note");
   cropNote.hidden = !(state.cropMode && tile.id === state.selectedId);
+}
+
+function buildSelectionOverlay() {
+  const overlay = document.createElement("div");
+  overlay.className = "selection-overlay";
+
+  const xHandle = document.createElement("div");
+  xHandle.className = "tile-handle";
+  xHandle.dataset.handle = "x";
+
+  const yHandle = document.createElement("div");
+  yHandle.className = "tile-handle";
+  yHandle.dataset.handle = "y";
+
+  const xyHandle = document.createElement("div");
+  xyHandle.className = "tile-handle";
+  xyHandle.dataset.handle = "xy";
+
+  overlay.append(xHandle, yHandle, xyHandle);
+  return overlay;
 }
 
 function buildTileElement(tile, asset) {
@@ -1457,13 +1712,12 @@ function renderInspector() {
     <div class="inspector-actions">
       <button class="text-action inspector-action" data-action="replace" type="button">replace</button>
       <button class="text-action inspector-action" data-action="crop" type="button">${cropAction}</button>
-      <button class="text-action inspector-action" data-action="front" type="button">front</button>
-      <button class="text-action inspector-action" data-action="back" type="button">back</button>
       <button class="text-action inspector-action" data-action="lock" type="button">${lockAction}</button>
       <button class="text-action inspector-action" data-action="anchor" type="button">${anchorAction}</button>
       <button class="text-action inspector-action" data-action="delete" type="button">delete</button>
     </div>
     <p class="empty-note inspector-note">${anchorCopy}</p>
+    <p class="empty-note inspector-note">Reorder layer depth from the layers panel by dragging cards up or down.</p>
   `;
 
   elements.inspector.querySelectorAll("[data-action]").forEach((button) => {
@@ -1484,23 +1738,12 @@ function runInspectorAction(action) {
   }
 
   if (action === "crop") {
+    if (!state.cropMode) {
+      ensureCropFreedom(tile);
+    }
     state.cropMode = !state.cropMode;
     renderWorkspaceClasses();
     renderInspector();
-    return;
-  }
-
-  if (action === "front") {
-    tile.zIndex = Math.max(...state.tiles.map((item) => item.zIndex), 0) + 1;
-    normalizeLayerOrder();
-    render();
-    return;
-  }
-
-  if (action === "back") {
-    tile.zIndex = Math.min(...state.tiles.map((item) => item.zIndex), 0) - 1;
-    normalizeLayerOrder();
-    render();
     return;
   }
 
@@ -1547,6 +1790,27 @@ function runInspectorAction(action) {
 
 function updateUploadLabel() {
   elements.uploadButton.textContent = state.tiles.length ? "add photos" : "add photos";
+}
+
+function clearComposition() {
+  if (!state.tiles.length && !state.assets.length) {
+    return;
+  }
+
+  state.assets.forEach((asset) => {
+    URL.revokeObjectURL(asset.url);
+  });
+  state.assets = [];
+  state.tiles = [];
+  state.selectedId = null;
+  state.anchorId = null;
+  state.cropMode = false;
+  state.replaceTileId = null;
+  state.pendingRefresh = false;
+  state.interaction = null;
+  updateUploadLabel();
+  render();
+  setStatus("Workspace cleared. Field size and controls were kept.", false);
 }
 
 function containsImageFiles(dataTransfer) {
@@ -1713,6 +1977,35 @@ function getCoverFrame(asset, tileWidthPx, tileHeightPx, cropScale) {
     drawWidth: asset.width * baseScale,
     drawHeight: asset.height * baseScale,
   };
+}
+
+function ensureCropFreedom(tile) {
+  const asset = getAsset(tile.assetId);
+  if (!asset) {
+    return;
+  }
+
+  const metrics = getMetrics();
+  const tileWidthPx = tile.width * metrics.colPx;
+  const tileHeightPx = tile.height * metrics.rowPx;
+  const minOverflowX = Math.min(36, tileWidthPx * 0.1);
+  const minOverflowY = Math.min(36, tileHeightPx * 0.1);
+
+  let nextScale = tile.cropScale;
+  let cover = getCoverFrame(asset, tileWidthPx, tileHeightPx, nextScale);
+  let safety = 0;
+
+  while (
+    safety < 20 &&
+    nextScale < 2.6 &&
+    (cover.drawWidth - tileWidthPx < minOverflowX || cover.drawHeight - tileHeightPx < minOverflowY)
+  ) {
+    nextScale = round(Math.min(2.6, nextScale + 0.08), 2);
+    cover = getCoverFrame(asset, tileWidthPx, tileHeightPx, nextScale);
+    safety += 1;
+  }
+
+  tile.cropScale = nextScale;
 }
 
 function clamp(min, value, max) {
