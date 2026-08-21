@@ -618,6 +618,21 @@ function getMetrics() {
   };
 }
 
+function getLayoutGuide(cols, rows) {
+  const metrics = getMetrics();
+  const compactViewport = metrics.rect.width <= 520 || metrics.rect.height <= 420;
+  const minimumTilePixels = compactViewport ? 54 : 24;
+  const minimumVisiblePixels = compactViewport ? 42 : 16;
+
+  return {
+    compactViewport,
+    minTileCols: clamp(1, Math.ceil(minimumTilePixels / Math.max(1, metrics.colPx)), cols),
+    minTileRows: clamp(1, Math.ceil(minimumTilePixels / Math.max(1, metrics.rowPx)), rows),
+    minVisibleCols: clamp(1, Math.ceil(minimumVisiblePixels / Math.max(1, metrics.colPx)), cols),
+    minVisibleRows: clamp(1, Math.ceil(minimumVisiblePixels / Math.max(1, metrics.rowPx)), rows),
+  };
+}
+
 function getTile(id) {
   return state.tiles.find((tile) => tile.id === Number(id)) || null;
 }
@@ -1124,6 +1139,7 @@ function layoutTiles(targetIds) {
   const density = state.controls.density / 100;
   const overlap = state.controls.overlap / 100;
   const variation = state.controls.variation / 100;
+  const layoutGuide = getLayoutGuide(cols, rows);
   const toneStrength = getToneStrength();
   const anchor = state.tiles.find((tile) => tile.isAnchor) || null;
   const freeClusters = createClusters(cols, rows, density);
@@ -1137,13 +1153,23 @@ function layoutTiles(targetIds) {
     : targets;
 
   for (const tile of sortedTargets) {
-    const dims = pickTileSize(cols, rows, density, variation, false);
+    const dims = pickTileSize(cols, rows, density, variation, false, layoutGuide);
     tile.width = dims.width;
     tile.height = dims.height;
 
     const pos = anchor
-      ? placeAroundAnchor(tile, anchor, cols, rows, overlap, density, toneStrength)
-      : placeInFreeMode(tile, freeClusters, toneClusters, cols, rows, overlap, density, toneStrength);
+      ? placeAroundAnchor(tile, anchor, cols, rows, overlap, density, toneStrength, layoutGuide)
+      : placeInFreeMode(
+          tile,
+          freeClusters,
+          toneClusters,
+          cols,
+          rows,
+          overlap,
+          density,
+          toneStrength,
+          layoutGuide,
+        );
 
     tile.x = pos.x;
     tile.y = pos.y;
@@ -1155,10 +1181,10 @@ function layoutTiles(targetIds) {
 
   if (anchor && !anchor.locked) {
     if (!anchor.movedManually && !anchor.resizedManually) {
-      const dims = pickTileSize(cols, rows, density, variation, true);
+      const dims = pickTileSize(cols, rows, density, variation, true, layoutGuide);
       anchor.width = dims.width;
       anchor.height = dims.height;
-      const placement = placeAnchor(cols, rows, anchor.width, anchor.height);
+      const placement = placeAnchor(cols, rows, anchor.width, anchor.height, layoutGuide);
       anchor.x = placement.x;
       anchor.y = placement.y;
     }
@@ -1166,17 +1192,19 @@ function layoutTiles(targetIds) {
   }
 }
 
-function pickTileSize(cols, rows, density, variation, isAnchor) {
+function pickTileSize(cols, rows, density, variation, isAnchor, layoutGuide = getLayoutGuide(cols, rows)) {
   const areaScale = lerp(0.66, 1.42, density);
+  const minWidth = layoutGuide.compactViewport ? Math.min(cols, Math.max(2, layoutGuide.minTileCols)) : 1;
+  const minHeight = layoutGuide.compactViewport ? Math.min(rows, Math.max(2, layoutGuide.minTileRows)) : 1;
 
   if (isAnchor) {
     const width = clamp(
-      4,
+      Math.max(4, minWidth),
       Math.round(lerp(cols * 0.34, cols * 0.58, Math.max(variation, 0.55)) * areaScale),
       Math.max(4, cols - 2),
     );
     const height = clamp(
-      3,
+      Math.max(3, minHeight),
       Math.round(lerp(rows * 0.32, rows * 0.54, Math.max(variation, 0.45)) * areaScale),
       Math.max(3, rows - 2),
     );
@@ -1188,28 +1216,28 @@ function pickTileSize(cols, rows, density, variation, isAnchor) {
   let height;
 
   if (mode < 0.22 + variation * 0.14) {
-    width = randomInt(1, variation > 0.5 ? 2 : 3);
+    width = randomInt(minWidth, Math.max(minWidth, variation > 0.5 ? 2 : 3));
     height = randomInt(Math.max(3, Math.round(rows * 0.28)), Math.max(4, Math.round(rows * 0.88)));
   } else if (mode < 0.44 + variation * 0.1) {
     width = randomInt(Math.max(3, Math.round(cols * 0.28)), Math.max(4, Math.round(cols * 0.88)));
-    height = randomInt(1, variation > 0.5 ? 2 : 3);
+    height = randomInt(minHeight, Math.max(minHeight, variation > 0.5 ? 2 : 3));
   } else if (mode < 0.64) {
-    width = randomInt(2, variation > 0.55 ? 5 : 4);
-    height = randomInt(2, variation > 0.55 ? 5 : 4);
+    width = randomInt(Math.max(2, minWidth), Math.max(Math.max(2, minWidth), variation > 0.55 ? 5 : 4));
+    height = randomInt(Math.max(2, minHeight), Math.max(Math.max(2, minHeight), variation > 0.55 ? 5 : 4));
   } else if (mode < 0.87) {
-    width = randomInt(3, Math.min(7, cols - 1));
-    height = randomInt(3, Math.min(7, rows - 1));
+    width = randomInt(Math.max(3, minWidth), Math.min(7, cols - 1));
+    height = randomInt(Math.max(3, minHeight), Math.min(7, rows - 1));
   } else {
     width = randomInt(Math.max(4, Math.round(cols * 0.22)), Math.max(5, Math.round(cols * 0.62)));
     height = randomInt(Math.max(3, Math.round(rows * 0.22)), Math.max(4, Math.round(rows * 0.62)));
   }
 
-  width = clamp(1, Math.round(width * areaScale), cols);
-  height = clamp(1, Math.round(height * areaScale), rows);
+  width = clamp(minWidth, Math.round(width * areaScale), cols);
+  height = clamp(minHeight, Math.round(height * areaScale), rows);
 
   if (variation < 0.28) {
-    width = clamp(2, Math.round(lerp(width, 4, 0.45)), cols);
-    height = clamp(2, Math.round(lerp(height, 4, 0.45)), rows);
+    width = clamp(Math.max(2, minWidth), Math.round(lerp(width, 4, 0.45)), cols);
+    height = clamp(Math.max(2, minHeight), Math.round(lerp(height, 4, 0.45)), rows);
   }
 
   return { width, height };
@@ -1234,7 +1262,26 @@ function createToneClusters(cols, rows, density) {
   }));
 }
 
-function placeInFreeMode(tile, clusters, toneClusters, cols, rows, overlap, density, toneStrength) {
+function clampLayoutPosition(tile, x, y, cols, rows, layoutGuide = getLayoutGuide(cols, rows)) {
+  const minVisibleCols = Math.min(tile.width, layoutGuide.minVisibleCols);
+  const minVisibleRows = Math.min(tile.height, layoutGuide.minVisibleRows);
+  return {
+    x: clamp(minVisibleCols - tile.width, x, cols - minVisibleCols),
+    y: clamp(minVisibleRows - tile.height, y, rows - minVisibleRows),
+  };
+}
+
+function placeInFreeMode(
+  tile,
+  clusters,
+  toneClusters,
+  cols,
+  rows,
+  overlap,
+  density,
+  toneStrength,
+  layoutGuide = getLayoutGuide(cols, rows),
+) {
   const useToneCluster =
     toneStrength > 0 && toneClusters.length && Math.random() < 0.55 + toneStrength * 0.3;
   const cluster = useToneCluster
@@ -1248,22 +1295,25 @@ function placeInFreeMode(tile, clusters, toneClusters, cols, rows, overlap, dens
     lerp(rows * 0.92, rows * 0.14, overlap) * lerp(1.18, 0.66, density) * spreadFactor;
   const x = Math.round(cluster.x - tile.width / 2 + randomFloat(-spreadX, spreadX));
   const y = Math.round(cluster.y - tile.height / 2 + randomFloat(-spreadY, spreadY));
-  return {
-    x: clamp(-tile.width + 1, x, cols - 1),
-    y: clamp(-tile.height + 1, y, rows - 1),
-  };
+  return clampLayoutPosition(tile, x, y, cols, rows, layoutGuide);
 }
 
-function placeAnchor(cols, rows, width, height) {
+function placeAnchor(cols, rows, width, height, layoutGuide = getLayoutGuide(cols, rows)) {
   const x = Math.round(randomFloat(cols * 0.08, cols * 0.64 - width * 0.4));
   const y = Math.round(randomFloat(rows * 0.06, rows * 0.62 - height * 0.35));
-  return {
-    x: clamp(-width + 1, x, cols - 1),
-    y: clamp(-height + 1, y, rows - 1),
-  };
+  return clampLayoutPosition({ width, height }, x, y, cols, rows, layoutGuide);
 }
 
-function placeAroundAnchor(tile, anchor, cols, rows, overlap, density, toneStrength = 0) {
+function placeAroundAnchor(
+  tile,
+  anchor,
+  cols,
+  rows,
+  overlap,
+  density,
+  toneStrength = 0,
+  layoutGuide = getLayoutGuide(cols, rows),
+) {
   const anchorCenterX = anchor.x + anchor.width / 2;
   const anchorCenterY = anchor.y + anchor.height / 2;
   const local = Math.random() < 0.74;
@@ -1296,10 +1346,7 @@ function placeAroundAnchor(tile, anchor, cols, rows, overlap, density, toneStren
       randomFloat(-rows * 0.08, rows * 0.08) * (1 - density * 0.25),
   );
 
-  return {
-    x: clamp(-tile.width + 1, x, cols - 1),
-    y: clamp(-tile.height + 1, y, rows - 1),
-  };
+  return clampLayoutPosition(tile, x, y, cols, rows, layoutGuide);
 }
 
 function describeControlLevel(value) {

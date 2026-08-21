@@ -99,6 +99,35 @@ async function assertFileChooserOpens(page, triggerSelector, message) {
   assert(chooser, message);
 }
 
+async function assertReadableMobileLayout(page, message) {
+  const workspace = await page.locator("#workspace").boundingBox();
+  const tileBoxes = await page.locator(".tile").evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const rect = node.getBoundingClientRect();
+      return {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      };
+    }),
+  );
+
+  assert(workspace, "Missing workspace bounds");
+  assert(tileBoxes.length > 0, "No tiles were rendered for mobile layout check");
+
+  for (const box of tileBoxes) {
+    const visibleWidth = Math.max(0, Math.min(box.right, workspace.x + workspace.width) - Math.max(box.left, workspace.x));
+    const visibleHeight = Math.max(0, Math.min(box.bottom, workspace.y + workspace.height) - Math.max(box.top, workspace.y));
+    assert(visibleWidth >= 32, `${message}: tile is too hidden horizontally`);
+    assert(visibleHeight >= 32, `${message}: tile is too hidden vertically`);
+    assert(box.width >= 48, `${message}: tile is too narrow for mobile`);
+    assert(box.height >= 48, `${message}: tile is too short for mobile`);
+  }
+}
+
 async function resizeSelectedTile(page) {
   const selectedTile = page.locator(".tile.is-selected");
   const dragVectors = [
@@ -390,11 +419,15 @@ async function main() {
       "#dropOverlay",
       "Mobile drop overlay did not open file chooser",
     );
-    await mobilePage.locator("#fileInput").setInputFiles([imageA]);
-    await mobilePage.waitForFunction(() => document.querySelectorAll(".tile").length === 1);
+    await mobilePage.locator("#fileInput").setInputFiles([imageA, imageB, imageA]);
+    await mobilePage.waitForFunction(() => document.querySelectorAll(".tile").length === 3);
     assert(
-      (await mobilePage.locator("#photoCount").textContent())?.trim() === "1",
+      (await mobilePage.locator("#photoCount").textContent())?.trim() === "3",
       "Mobile upload did not update photo count",
+    );
+    await assertReadableMobileLayout(
+      mobilePage,
+      "Mobile upload layout should keep tiles readable inside the field",
     );
     await mobilePage.close();
 
