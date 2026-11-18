@@ -295,11 +295,39 @@ async function main() {
       () => document.getElementById("canvasLabel")?.textContent?.trim() === "1320 × 980",
     );
 
-    const firstTile = page.locator(".tile").first();
-    await firstTile.click({ position: { x: 12, y: 12 } });
+    // Tiles are placed randomly and may hang off the field or sit under others; find a point on
+    // some tile that is inside the field and not covered, and click the tile there.
+    const clickTarget = await page.evaluate(() => {
+      const field = document.getElementById("workspace").getBoundingClientRect();
+      const tiles = [...document.querySelectorAll(".tile")];
+      for (const [index, tile] of tiles.entries()) {
+        const rect = tile.getBoundingClientRect();
+        for (let fy = 0.1; fy < 1; fy += 0.2) {
+          for (let fx = 0.1; fx < 1; fx += 0.2) {
+            const x = rect.left + rect.width * fx;
+            const y = rect.top + rect.height * fy;
+            const inside = x > field.left + 2 && x < field.right - 2 && y > field.top + 2 && y < field.bottom - 2;
+            if (inside && document.elementFromPoint(x, y)?.closest(".tile") === tile) {
+              return { index, x: x - rect.left, y: y - rect.top };
+            }
+          }
+        }
+      }
+      return { index: 0, x: 12, y: 12 };
+    });
+    const firstTile = page.locator(".tile").nth(clickTarget.index);
+    await firstTile.click({ position: { x: clickTarget.x, y: clickTarget.y } });
     await page.waitForFunction(
       () => /selected/i.test(document.getElementById("inspector")?.textContent || ""),
     );
+    // Give the pointer checks below a predictable target: a 3 × 3 tile near the top-left, on top.
+    await page.evaluate(() => {
+      const tile = getSelectedTile();
+      Object.assign(tile, { x: 1, y: 1, width: 3, height: 3 });
+      tile.zIndex = Math.max(...state.tiles.map((item) => item.zIndex)) + 1;
+      normalizeLayerOrder();
+      render();
+    });
     const selectedTile = page.locator(".tile.is-selected");
 
     const beforeDrag = await firstTile.boundingBox();
@@ -337,6 +365,15 @@ async function main() {
       const imageRect = node.getBoundingClientRect();
       return `${Math.round(imageRect.left - tileRect.left)} ${Math.round(imageRect.top - tileRect.top)}`;
     };
+    // Lift the tile to the top with "]" so no other tile covers the point we drag from.
+    const tileCount = await page.locator(".tile").count();
+    for (let step = 0; step < tileCount; step += 1) {
+      await page.keyboard.press("]");
+    }
+    assert(
+      await page.evaluate(() => Math.max(...state.tiles.map((tile) => tile.zIndex)) === getSelectedTile().zIndex),
+      "] did not bring the selected tile to the top",
+    );
     const cropBox = await selectedTile.boundingBox();
     assert(cropBox, "Could not read crop box");
     const dragCrop = async (dx, dy) => {
@@ -390,6 +427,10 @@ async function main() {
 
     await page.click('[data-action="lock"]');
     assert(/unlock/i.test(await text(page.locator('[data-action="lock"]'))), "Lock toggle failed");
+    assert(
+      await page.evaluate(() => document.activeElement?.dataset.action === "lock"),
+      "Keyboard focus was lost after an inspector action",
+    );
 
     const topLayerTitleBefore = await text(page.locator(".layer-card .layer-title").first());
     await page.locator(".layer-card").nth(1).click();
@@ -399,6 +440,33 @@ async function main() {
     );
     const topLayerTitleAfterSelect = await text(page.locator(".layer-card .layer-title").first());
     assert(topLayerTitleAfterSelect === topLayerTitleBefore, "Layer click should not surface tile");
+    assert(
+      await page.evaluate(() => document.activeElement?.classList.contains("layer-card")),
+      "Keyboard focus was lost after selecting a layer card",
+    );
+
+    // Keyboard equivalents: arrows move the selected tile, Shift + arrows resize it.
+    const tileState = () => page.evaluate(() => {
+      const tile = getSelectedTile();
+      return { x: tile.x, width: tile.width };
+    });
+    // The tile locked above may be the one selected now; locked tiles (correctly) ignore arrows.
+    if (await page.evaluate(() => getSelectedTile().locked)) {
+      await page.click('[data-action="lock"]');
+    }
+    await page.locator(".layer-card.is-selected").focus();
+    const beforeKeys = await tileState();
+    await page.keyboard.press("ArrowRight");
+    let afterKeys = await tileState();
+    if (afterKeys.x === beforeKeys.x) {
+      await page.keyboard.press("ArrowLeft");
+      await page.keyboard.press("ArrowLeft");
+      afterKeys = await tileState();
+    }
+    assert(afterKeys.x !== beforeKeys.x, "Arrow keys did not move the selected tile");
+    await page.keyboard.press("Shift+ArrowLeft");
+    const afterResize = await tileState();
+    assert(afterResize.width !== afterKeys.width || afterKeys.width === 1, "Shift + arrow did not resize the selected tile");
 
     // Drop on the upper part of the top card so the placement is "before" it, independent of card height.
     await page.locator(".layer-card").nth(1).dragTo(page.locator(".layer-card").first(), {

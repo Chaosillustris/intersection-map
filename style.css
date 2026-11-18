@@ -12,7 +12,8 @@
   --muted: rgba(17, 24, 39, 0.62);
   --faint: rgba(17, 24, 39, 0.04);
   --line: rgba(17, 24, 39, 0.1);
-  --line-strong: rgba(17, 24, 39, 0.4);
+  /* 0.5 keeps component edges (inputs, slider track) at ≥3:1 against the page */
+  --line-strong: rgba(17, 24, 39, 0.5);
   --accent: #111827;
   --cta: #2563eb;
   --cta-text: #ffffff;
@@ -381,7 +382,7 @@ input[type="number"] {
   width: 100%;
   appearance: textfield;
   border: 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-strong);
   border-radius: 0;
   background: transparent;
   color: var(--text);

@@ -1244,7 +1244,113 @@ function handleKeydown(event) {
     clearDropTarget();
     renderWorkspaceClasses();
     renderInspector();
+    return;
   }
+
+  if (handleTileKeys(event)) {
+    event.preventDefault();
+  }
+}
+
+const arrowDeltas = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+};
+
+function isTypingTarget(element) {
+  return Boolean(
+    element &&
+      (element.tagName === "INPUT" ||
+        element.tagName === "TEXTAREA" ||
+        element.tagName === "SELECT" ||
+        element.isContentEditable),
+  );
+}
+
+// Keyboard equivalents of the pointer gestures on the selected tile:
+// arrows move (Alt: quarter cell), Shift + arrows resize, [ / ] change depth;
+// in crop mode arrows pan the photo and + / − zoom it.
+function handleTileKeys(event) {
+  if (isTypingTarget(event.target) || event.metaKey || event.ctrlKey || state.upload.active) {
+    return false;
+  }
+
+  const tile = getSelectedTile();
+  if (!tile) {
+    return false;
+  }
+
+  // Physical key codes, so [ ] + − work on any keyboard layout (e.g. Russian, where [ types "х").
+  if (event.code === "BracketLeft" || event.code === "BracketRight") {
+    moveTileDepth(tile, event.code === "BracketRight" ? 1 : -1);
+    return true;
+  }
+
+  const zoomIn = event.code === "Equal" || event.code === "NumpadAdd" || event.key === "+";
+  const zoomOut = event.code === "Minus" || event.code === "NumpadSubtract" || event.key === "-";
+  if (state.cropMode && (zoomIn || zoomOut)) {
+    const delta = zoomOut ? -0.05 : 0.05;
+    tile.cropScale = clamp(1, round(tile.cropScale + delta, 2), 2.6);
+    renderTilesOnly();
+    renderInspector();
+    return true;
+  }
+
+  const delta = arrowDeltas[event.key];
+  if (!delta) {
+    return false;
+  }
+  const [dx, dy] = delta;
+
+  if (state.cropMode) {
+    tile.cropX = clamp(0, round(tile.cropX + dx * 0.05, 3), 1);
+    tile.cropY = clamp(0, round(tile.cropY + dy * 0.05, 3), 1);
+    renderTile(tile);
+    renderSelectionOverlay();
+    return true;
+  }
+
+  if (tile.locked) {
+    setStatus(`${tile.label} is locked. Unlock it to move or resize.`, false);
+    return true;
+  }
+
+  const { cols, rows } = getGrid();
+  if (event.shiftKey) {
+    tile.width = clamp(1, tile.width + dx, cols);
+    tile.height = clamp(1, tile.height + dy, rows);
+    tile.resizedManually = true;
+  } else {
+    const step = event.altKey ? dragGranularity : 1;
+    tile.x = snapToStep(tile.x + dx * step, dragGranularity);
+    tile.y = snapToStep(tile.y + dy * step, dragGranularity);
+    tile.movedManually = true;
+  }
+  tile.x = clamp(-tile.width + 1, tile.x, cols - 1);
+  tile.y = clamp(-tile.height + 1, tile.y, rows - 1);
+
+  renderTile(tile);
+  renderSelectionOverlay();
+  if (event.shiftKey) {
+    renderInspector();
+    renderLayerStrip();
+  }
+  return true;
+}
+
+function moveTileDepth(tile, direction) {
+  const ordered = [...state.tiles].sort((left, right) => left.zIndex - right.zIndex);
+  const index = ordered.indexOf(tile);
+  const neighbour = ordered[index + direction];
+  if (!neighbour) {
+    setStatus(`${tile.label} is already ${direction > 0 ? "on top" : "at the bottom"}.`, false);
+    return;
+  }
+  [tile.zIndex, neighbour.zIndex] = [neighbour.zIndex, tile.zIndex];
+  render();
+  setStatus(`Layer order updated. ${tile.label} moved ${direction > 0 ? "up" : "down"}.`, false);
 }
 
 function handleWorkspaceDragEnter(event) {
@@ -1810,7 +1916,21 @@ function renderNextStep() {
   elements.exportButton.classList.toggle("cta", nextStep === "export");
 }
 
+// Rebuilding a container drops keyboard focus to <body>. Put it back on the control that had it
+// (matched by `keyAttr`), so keyboard users stay where they were after every action.
+function rebuildKeepingFocus(container, keyAttr, rebuild) {
+  const active = document.activeElement;
+  const key = active && container.contains(active) ? active.getAttribute(keyAttr) : null;
+  rebuild();
+  if (key === null) return;
+  container.querySelector(`[${keyAttr}="${CSS.escape(key)}"]`)?.focus({ preventScroll: true });
+}
+
 function renderLayerStrip() {
+  rebuildKeepingFocus(elements.layerList, "data-tile-id", renderLayerStripContent);
+}
+
+function renderLayerStripContent() {
   const sorted = [...state.tiles].sort((left, right) => right.zIndex - left.zIndex);
   elements.layerList.innerHTML = "";
   elements.layerEmpty.hidden = sorted.length > 0;
@@ -1833,6 +1953,7 @@ function renderLayerStrip() {
     button.title = `Select ${tile.label}`;
     button.draggable = true;
     button.classList.toggle("is-selected", tile.id === state.selectedId);
+    button.setAttribute("aria-pressed", String(tile.id === state.selectedId));
 
     const grip = document.createElement("span");
     grip.className = "layer-grip";
@@ -2127,6 +2248,10 @@ function buildTileElement(tile, asset) {
 }
 
 function renderInspector() {
+  rebuildKeepingFocus(elements.inspector, "data-action", renderInspectorContent);
+}
+
+function renderInspectorContent() {
   const tile = getSelectedTile();
 
   if (!tile) {
@@ -2172,7 +2297,11 @@ function renderInspector() {
       <button class="text-action inspector-action" data-action="delete" type="button">delete</button>
     </div>
     <p class="empty-note inspector-note">${anchorCopy}</p>
-    <p class="empty-note inspector-note">Reorder layer depth from the layers panel by dragging cards up or down.</p>
+    <p class="empty-note inspector-note">${
+      state.cropMode
+        ? "Keys: arrows pan the photo, + and − zoom, Esc finishes."
+        : "Keys: arrows move, Shift + arrows resize, [ and ] change depth. Or drag cards in the layers panel."
+    }</p>
   `;
 
   elements.inspector.querySelectorAll("[data-action]").forEach((button) => {
@@ -2243,6 +2372,9 @@ function runInspectorAction(action) {
     normalizeLayerOrder();
     updateUploadLabel();
     render();
+    setStatus(`${tile.label} deleted.`, false);
+    // The delete button is gone; keep keyboard users in the layers list (or on the upload button).
+    (elements.layerList.querySelector(".layer-card") || elements.uploadButton).focus({ preventScroll: true });
   }
 }
 

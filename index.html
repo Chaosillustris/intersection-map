@@ -22,7 +22,7 @@
     <div class="app">
       <aside class="rail">
         <div class="rail-block masthead">
-          <p class="kicker">intersection map</p>
+          <h1 class="kicker">intersection map</h1>
         </div>
 
         <div class="rail-block meta">
@@ -89,7 +89,7 @@
       <main class="stage">
         <div class="stage-header">
           <div class="stage-heading">
-            <p class="stage-kicker">workspace</p>
+            <h2 class="stage-kicker">workspace</h2>
             <p class="stage-subtitle">drop photographs directly onto the field or add them manually</p>
           </div>
           <div class="stage-actions">
@@ -125,7 +125,7 @@
           </div>
           <aside class="layers-panel">
               <div class="layers-header">
-                <p class="stage-kicker">layers</p>
+                <h2 class="stage-kicker">layers</h2>
                 <p class="layers-count" id="layerCount">0</p>
               </div>
             <p class="layers-note">Drag cards here to reorder depth. Click a card to select the photo.</p>
@@ -143,8 +143,8 @@
       </footer>
     </div>
 
-    <input id="fileInput" class="visually-hidden-input" type="file" accept="image/*,.heic,.heif" multiple />
-    <input id="replaceInput" class="visually-hidden-input" type="file" accept="image/*,.heic,.heif" />
+    <input id="fileInput" class="visually-hidden-input" tabindex="-1" type="file" accept="image/*,.heic,.heif" multiple />
+    <input id="replaceInput" class="visually-hidden-input" tabindex="-1" type="file" accept="image/*,.heic,.heif" />
 
     <script src="./version.js"></script>
     <script src="./app.js"></script>
