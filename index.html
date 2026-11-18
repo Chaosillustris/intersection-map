@@ -7,9 +7,12 @@
       name="description"
       content="Intersection Map is a browser-based composition field for arranging photographs into experimental editorial layouts."
     />
-    <meta name="theme-color" content="#eaedf0" />
+    <meta name="theme-color" content="#fafafa" />
     <meta name="application-version" content="1.0.3" />
     <title>intersection map / 01</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" />
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
@@ -88,12 +91,12 @@
             <p class="stage-subtitle">drop photographs directly onto the field or add them manually</p>
           </div>
           <div class="stage-actions">
-            <label class="text-action upload-trigger" id="uploadButton" for="fileInput" role="button" tabindex="0">add photos</label>
+            <label class="text-action cta upload-trigger" id="uploadButton" for="fileInput" role="button" tabindex="0">add photos</label>
             <button class="text-action" id="updateButton" type="button">update</button>
             <button class="text-action" id="scatterButton" type="button">scatter</button>
             <button class="text-action" id="mutateButton" type="button">mutate</button>
             <button class="text-action" id="exportButton" type="button">export</button>
-            <button class="text-action" id="clearButton" type="button">clear all</button>
+            <button class="text-action is-destructive" id="clearButton" type="button">clear all</button>
           </div>
         </div>
         <div class="stage-status-row">

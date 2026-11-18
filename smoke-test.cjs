@@ -281,7 +281,12 @@ async function main() {
       node.value = "41";
       node.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    assert((await text(page.locator("#updateButton"))).includes("*"), "Update indicator did not appear");
+    // Pending changes make "update" the highlighted next step (the only .cta control).
+    assert(
+      await page.locator("#updateButton").evaluate((node) => node.classList.contains("cta")),
+      "Update indicator did not appear",
+    );
+    assert((await page.locator(".stage-actions .cta").count()) === 1, "More than one next-step button is highlighted");
 
     await page.fill("#canvasWidthInput", "1320");
     await page.fill("#canvasHeightInput", "980");

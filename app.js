@@ -1719,6 +1719,7 @@ function render() {
 }
 
 function renderWorkspaceClasses() {
+  renderNextStep();
   elements.workspace.classList.toggle("is-active-crop", state.cropMode);
   elements.workspace.classList.toggle("is-drop-target", state.isDropTarget);
   elements.workspace.classList.toggle("is-loading", state.upload.active);
@@ -1778,7 +1779,23 @@ function renderMeta() {
     elements.retryButton.hidden = state.upload.active || state.failedFiles.length === 0;
     elements.retryButton.textContent = `retry ${state.failedFiles.length} failed`;
   }
-  elements.updateButton.textContent = state.pendingRefresh ? "update *" : "update";
+  elements.updateButton.textContent = "update";
+  renderNextStep();
+}
+
+// The accent colour marks exactly one control: the step the user should take next.
+function getNextStep() {
+  if (state.upload.active || state.cropMode) return null;
+  if (state.tiles.length === 0) return "upload";
+  if (state.pendingRefresh) return "update";
+  return "export";
+}
+
+function renderNextStep() {
+  const nextStep = getNextStep();
+  elements.uploadButton.classList.toggle("cta", nextStep === "upload");
+  elements.updateButton.classList.toggle("cta", nextStep === "update");
+  elements.exportButton.classList.toggle("cta", nextStep === "export");
 }
 
 function renderLayerStrip() {
@@ -2137,7 +2154,7 @@ function renderInspector() {
     </div>
     <div class="inspector-actions">
       <button class="text-action inspector-action" data-action="replace" type="button">replace</button>
-      <button class="text-action inspector-action" data-action="crop" type="button">${cropAction}</button>
+      <button class="text-action inspector-action${state.cropMode ? " cta" : ""}" data-action="crop" type="button">${cropAction}</button>
       <button class="text-action inspector-action" data-action="lock" type="button">${lockAction}</button>
       <button class="text-action inspector-action" data-action="anchor" type="button">${anchorAction}</button>
       <button class="text-action inspector-action" data-action="delete" type="button">delete</button>
