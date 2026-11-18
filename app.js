@@ -28,12 +28,23 @@ const heicDecoderPromises = new Map();
 let uploadQueue = Promise.resolve();
 const toneModes = ["off", "soft", "strong"];
 
+// cols × rows is the classic layout grid; the square display grid keeps cols and derives rows
+// from the field proportions (see getGrid and layoutOnClassicGrid).
 const gridPresets = [
   { cols: 12, rows: 9 },
   { cols: 14, rows: 10 },
   { cols: 16, rows: 10 },
   { cols: 10, rows: 8 },
 ];
+
+// Every slider starts in the middle; "reset to middle" returns them here.
+// (density is shown as "size": it scales the tiles.)
+const defaultControls = { density: 50, overlap: 50, variation: 50, air: 50 };
+
+// Set only while a layout runs on the classic preset grid.
+let layoutGridOverride = null;
+// Candidate layouts per update/scatter; the one closest to the "air" target wins.
+const layoutAttempts = 8;
 
 const elements = {
   workspace: document.getElementById("workspace"),
@@ -63,6 +74,8 @@ const elements = {
   densityRange: document.getElementById("densityRange"),
   overlapRange: document.getElementById("overlapRange"),
   variationRange: document.getElementById("variationRange"),
+  airRange: document.getElementById("airRange"),
+  resetControlsButton: document.getElementById("resetControlsButton"),
   inspector: document.getElementById("inspector"),
   workspaceNote: document.getElementById("workspaceNote"),
   layerCount: document.getElementById("layerCount"),
@@ -108,9 +121,10 @@ const state = {
   nextTileId: 1,
   gridIndex: savedSettings.gridIndex ?? 0,
   controls: {
-    density: savedSettings.density ?? 58,
-    overlap: savedSettings.overlap ?? 68,
-    variation: savedSettings.variation ?? 62,
+    density: savedSettings.density ?? defaultControls.density,
+    overlap: savedSettings.overlap ?? defaultControls.overlap,
+    variation: savedSettings.variation ?? defaultControls.variation,
+    air: savedSettings.air ?? defaultControls.air,
     tone: toneModes.includes(savedSettings.tone) ? savedSettings.tone : "soft",
   },
 };
@@ -139,6 +153,8 @@ function bindEvents() {
   elements.densityRange.addEventListener("input", handleControlInput);
   elements.overlapRange.addEventListener("input", handleControlInput);
   elements.variationRange.addEventListener("input", handleControlInput);
+  elements.airRange.addEventListener("input", handleControlInput);
+  elements.resetControlsButton.addEventListener("click", resetControls);
   elements.canvasWidthInput.addEventListener("keydown", handleCanvasSizeKeydown);
   elements.canvasHeightInput.addEventListener("keydown", handleCanvasSizeKeydown);
   elements.workspace.addEventListener("pointerdown", handleWorkspacePointerDown);
@@ -201,6 +217,7 @@ function saveSettings() {
       density: state.controls.density,
       overlap: state.controls.overlap,
       variation: state.controls.variation,
+      air: state.controls.air,
       tone: state.controls.tone,
       gridIndex: state.gridIndex,
       canvasWidth: state.canvas.width,
@@ -246,6 +263,7 @@ function syncControlsFromState() {
   elements.densityRange.value = state.controls.density;
   elements.overlapRange.value = state.controls.overlap;
   elements.variationRange.value = state.controls.variation;
+  elements.airRange.value = state.controls.air;
 }
 
 function getInitialCanvasSize(settings) {
@@ -312,11 +330,12 @@ function handleControlInput() {
   state.controls.density = Number(elements.densityRange.value);
   state.controls.overlap = Number(elements.overlapRange.value);
   state.controls.variation = Number(elements.variationRange.value);
+  state.controls.air = Number(elements.airRange.value);
   state.pendingRefresh = true;
   saveSettings();
   renderMeta();
   setStatus(
-    `Density ${describeControlLevel(state.controls.density)}, overlap ${describeControlLevel(state.controls.overlap)}, variation ${describeControlLevel(state.controls.variation)}. Press update to reflow the composition.`,
+    `Size ${describeControlLevel(state.controls.density)}, overlap ${describeControlLevel(state.controls.overlap)}, variation ${describeControlLevel(state.controls.variation)}, air ${describeControlLevel(state.controls.air)}. Press update to reflow the composition.`,
     false,
   );
 }
@@ -928,6 +947,9 @@ function createTile(assetId) {
 // Presets fix the column count; rows follow the field's proportions so cells stay (nearly) square
 // at any field size, instead of stretching into rectangles on non-4:3 fields.
 function getGrid() {
+  if (layoutGridOverride) {
+    return layoutGridOverride;
+  }
   const preset = gridPresets[state.gridIndex] || gridPresets[0];
   const ratio = state.canvas.height / state.canvas.width;
   return { cols: preset.cols, rows: clamp(2, Math.round(preset.cols * ratio), 60) };
@@ -1585,11 +1607,119 @@ function mutate() {
   render();
 }
 
+// ---- Layout -------------------------------------------------------------------------------
+// The composition is laid out on the classic preset grid (e.g. 12 × 9) whatever the field's
+// shape, then mapped onto the square display grid. That keeps the original density and the
+// elongated tiles on tall/wide fields, while dragging still snaps to square cells.
+// Several candidate layouts are made and the one closest to the "air" target is kept.
 function layoutTiles(targetIds) {
   const ids = new Set(targetIds);
+  if (!state.tiles.some((tile) => ids.has(tile.id))) {
+    render();
+    return;
+  }
+
+  const original = snapshotTiles();
+  const targetEmpty = getTargetEmptiness();
+  let best = null;
+  for (let attempt = 0; attempt < layoutAttempts; attempt += 1) {
+    restoreTiles(original);
+    layoutOnClassicGrid(ids);
+    const score = Math.abs(measureEmptyShare() - targetEmpty);
+    if (!best || score < best.score) {
+      best = { score, tiles: snapshotTiles() };
+    }
+  }
+  restoreTiles(best.tiles);
+}
+
+// "air" 0..100 → share of the field left empty, from 5% (packed) to 60% (sparse).
+function getTargetEmptiness() {
+  return lerp(0.05, 0.6, state.controls.air / 100);
+}
+
+function getClassicGrid() {
+  const preset = gridPresets[state.gridIndex] || gridPresets[0];
+  return { cols: preset.cols, rows: preset.rows };
+}
+
+function snapshotTiles() {
+  return state.tiles.map(({ id, x, y, width, height, zIndex, movedManually, resizedManually }) => ({
+    id,
+    x,
+    y,
+    width,
+    height,
+    zIndex,
+    movedManually,
+    resizedManually,
+  }));
+}
+
+function restoreTiles(snapshot) {
+  const byId = new Map(snapshot.map((entry) => [entry.id, entry]));
+  state.tiles.forEach((tile) => {
+    const saved = byId.get(tile.id);
+    if (saved) Object.assign(tile, saved);
+  });
+}
+
+function layoutOnClassicGrid(ids) {
+  const real = getGrid();
+  const classic = getClassicGrid();
+  const rowScale = real.rows / classic.rows;
+  const realBefore = new Map(state.tiles.map((tile) => [tile.id, { y: tile.y, height: tile.height }]));
+
+  // Express every tile in classic rows so placement around anchors/locked tiles stays correct.
+  state.tiles.forEach((tile) => {
+    tile.y /= rowScale;
+    tile.height /= rowScale;
+  });
+  const classicBefore = new Map(state.tiles.map((tile) => [tile.id, { ...tile }]));
+
+  layoutGridOverride = classic;
+  try {
+    layoutTilesOnClassic(ids);
+  } finally {
+    layoutGridOverride = null;
+  }
+
+  state.tiles.forEach((tile) => {
+    const before = classicBefore.get(tile.id);
+    const untouched =
+      tile.x === before.x && tile.y === before.y && tile.width === before.width && tile.height === before.height;
+    if (untouched) {
+      Object.assign(tile, realBefore.get(tile.id));
+      return;
+    }
+    tile.height = clamp(1, Math.round(tile.height * rowScale), real.rows);
+    tile.y = clamp(-tile.height + 1, Math.round(tile.y * rowScale), real.rows - 1);
+  });
+}
+
+function measureEmptyShare() {
+  const { cols, rows } = getGrid();
+  const perCell = 4;
+  const width = cols * perCell;
+  const height = rows * perCell;
+  const covered = new Uint8Array(width * height);
+  for (const tile of state.tiles) {
+    const top = Math.max(0, Math.round(tile.y * perCell));
+    const bottom = Math.min(height, Math.round((tile.y + tile.height) * perCell));
+    const left = Math.max(0, Math.round(tile.x * perCell));
+    const right = Math.min(width, Math.round((tile.x + tile.width) * perCell));
+    for (let y = top; y < bottom; y += 1) {
+      covered.fill(1, y * width + left, y * width + Math.max(left, right));
+    }
+  }
+  let filled = 0;
+  for (const cell of covered) filled += cell;
+  return 1 - filled / covered.length;
+}
+
+function layoutTilesOnClassic(ids) {
   const targets = state.tiles.filter((tile) => ids.has(tile.id));
   if (!targets.length) {
-    render();
     return;
   }
 
@@ -1651,7 +1781,10 @@ function layoutTiles(targetIds) {
 }
 
 function pickTileSize(cols, rows, density, variation, isAnchor, layoutGuide = getLayoutGuide(cols, rows)) {
-  const areaScale = lerp(0.66, 1.42, density);
+  // Air also nudges tile size (neutral at the middle) so packed and sparse targets are reachable.
+  const air = state.controls.air / 100;
+  const airScale = air <= 0.5 ? lerp(1.2, 1, air * 2) : lerp(1, 0.5, (air - 0.5) * 2);
+  const areaScale = lerp(0.66, 1.42, density) * airScale;
   const minWidth = layoutGuide.compactViewport ? Math.min(cols, Math.max(2, layoutGuide.minTileCols)) : 1;
   const minHeight = layoutGuide.compactViewport ? Math.min(rows, Math.max(2, layoutGuide.minTileRows)) : 1;
 
@@ -1805,6 +1938,22 @@ function placeAroundAnchor(
   );
 
   return clampLayoutPosition(tile, x, y, cols, rows, layoutGuide);
+}
+
+function resetControls() {
+  Object.assign(state.controls, defaultControls);
+  syncControlsFromState();
+  saveSettings();
+  if (state.tiles.length) {
+    state.pendingRefresh = true;
+  }
+  render();
+  setStatus(
+    state.tiles.length
+      ? "Sliders reset to the middle. Press update to reflow the composition."
+      : "Sliders reset to the middle.",
+    false,
+  );
 }
 
 function describeControlLevel(value) {
