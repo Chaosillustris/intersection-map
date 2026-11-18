@@ -285,6 +285,7 @@ function applyCanvasSize() {
     nextSize.width !== state.canvas.width || nextSize.height !== state.canvas.height;
 
   state.canvas = nextSize;
+  clampTilesToGrid();
   syncCanvasInputs();
   saveSettings();
   render();
@@ -924,8 +925,22 @@ function createTile(assetId) {
   };
 }
 
+// Presets fix the column count; rows follow the field's proportions so cells stay (nearly) square
+// at any field size, instead of stretching into rectangles on non-4:3 fields.
 function getGrid() {
-  return gridPresets[state.gridIndex] || gridPresets[0];
+  const preset = gridPresets[state.gridIndex] || gridPresets[0];
+  const ratio = state.canvas.height / state.canvas.width;
+  return { cols: preset.cols, rows: clamp(2, Math.round(preset.cols * ratio), 60) };
+}
+
+function clampTilesToGrid() {
+  const { cols, rows } = getGrid();
+  state.tiles.forEach((tile) => {
+    tile.width = clamp(1, tile.width, cols);
+    tile.height = clamp(1, tile.height, rows);
+    tile.x = clamp(-tile.width + 1, tile.x, cols - 1);
+    tile.y = clamp(-tile.height + 1, tile.y, rows - 1);
+  });
 }
 
 function getMetrics() {
@@ -1371,12 +1386,7 @@ function cycleGrid() {
   state.gridIndex = (state.gridIndex + 1) % gridPresets.length;
   state.pendingRefresh = true;
   saveSettings();
-  state.tiles.forEach((tile) => {
-    tile.x = clamp(-tile.width + 1, tile.x, getGrid().cols - 1);
-    tile.y = clamp(-tile.height + 1, tile.y, getGrid().rows - 1);
-    tile.width = clamp(1, tile.width, getGrid().cols);
-    tile.height = clamp(1, tile.height, getGrid().rows);
-  });
+  clampTilesToGrid();
   render();
 }
 
@@ -1720,6 +1730,8 @@ function render() {
 
 function renderWorkspaceClasses() {
   renderNextStep();
+  // Tile-related hints and the tile inspector only make sense once there are photos.
+  document.body.classList.toggle("has-photos", state.tiles.length > 0);
   elements.workspace.classList.toggle("is-active-crop", state.cropMode);
   elements.workspace.classList.toggle("is-drop-target", state.isDropTarget);
   elements.workspace.classList.toggle("is-loading", state.upload.active);

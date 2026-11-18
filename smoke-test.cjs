@@ -213,7 +213,7 @@ async function main() {
     await page.evaluate(() => localStorage.clear());
     await page.reload({ waitUntil: "domcontentloaded" });
 
-    assert((await page.title()) === "intersection map / 01", "Unexpected page title");
+    assert((await page.title()) === "intersection map", "Unexpected page title");
 
     const buttons = [
       "#uploadButton",
@@ -400,7 +400,10 @@ async function main() {
     const topLayerTitleAfterSelect = await text(page.locator(".layer-card .layer-title").first());
     assert(topLayerTitleAfterSelect === topLayerTitleBefore, "Layer click should not surface tile");
 
-    await page.locator(".layer-card").nth(1).dragTo(page.locator(".layer-card").first());
+    // Drop on the upper part of the top card so the placement is "before" it, independent of card height.
+    await page.locator(".layer-card").nth(1).dragTo(page.locator(".layer-card").first(), {
+      targetPosition: { x: 24, y: 4 },
+    });
     await page.waitForFunction(
       () => /Layer order updated/i.test(document.getElementById("statusNote")?.textContent || ""),
     );

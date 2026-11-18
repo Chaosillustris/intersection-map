@@ -4,7 +4,7 @@ export default function Home() {
       <div className="app">
         <aside className="rail">
           <div className="rail-block masthead">
-            <p className="kicker">intersection map / 01</p>
+            <p className="kicker">intersection map</p>
             <p className="version-tag">
               version <span id="appVersionLabel">1.0.3</span> <span id="appBuildLabel"></span>
             </p>

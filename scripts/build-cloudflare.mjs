@@ -7,7 +7,16 @@ const projectRoot = path.resolve(path.dirname(currentFile), "..");
 const outputDir = path.join(projectRoot, "dist-static");
 const publicDir = path.join(projectRoot, "public");
 
-const rootFiles = ["index.html", "style.css", "app.js", "version.js", "_headers"];
+const rootFiles = [
+  "index.html",
+  "style.css",
+  "app.js",
+  "version.js",
+  "_headers",
+  "favicon.svg",
+  "favicon-32.png",
+  "apple-touch-icon.png",
+];
 
 // `npm run build` (vinext) leaves .wrangler/deploy/config.json behind. Wrangler follows that redirect to a
 // Worker config (main/rules/assets) and `wrangler pages deploy` then fails validation. The static Pages
