@@ -414,10 +414,22 @@ async function main() {
       "Anchor status message did not appear",
     );
 
+    const anchorBefore = await page.evaluate(() => {
+      const tile = state.tiles.find((item) => item.isAnchor);
+      // As if pinned without touching it first: the old code re-placed such anchors at random.
+      tile.movedManually = false;
+      tile.resizedManually = false;
+      return `${tile.x},${tile.y},${tile.width},${tile.height}`;
+    });
     await page.click("#updateButton");
     await page.waitForFunction(
       () => /Composition updated/i.test(document.getElementById("statusNote")?.textContent || ""),
     );
+    const anchorAfter = await page.evaluate(() => {
+      const tile = state.tiles.find((item) => item.isAnchor);
+      return `${tile.x},${tile.y},${tile.width},${tile.height}`;
+    });
+    assert(anchorAfter === anchorBefore, `Anchor moved on update (${anchorBefore} -> ${anchorAfter})`);
 
     await page.click('[data-action="replace"]');
     await page.locator("#replaceInput").setInputFiles(imageB);

@@ -1767,15 +1767,9 @@ function layoutTilesOnClassic(ids) {
     zBase += zStep;
   }
 
+  // The anchor stays exactly where it was pinned (as the inspector promises); the rest is
+  // arranged around it. Previously an untouched anchor was re-placed at random on every update.
   if (anchor && !anchor.locked) {
-    if (!anchor.movedManually && !anchor.resizedManually) {
-      const dims = pickTileSize(cols, rows, density, variation, true, layoutGuide);
-      anchor.width = dims.width;
-      anchor.height = dims.height;
-      const placement = placeAnchor(cols, rows, anchor.width, anchor.height, layoutGuide);
-      anchor.x = placement.x;
-      anchor.y = placement.y;
-    }
     anchor.zIndex = Math.max(...state.tiles.map((tile) => tile.zIndex), 0) - 1;
   }
 }
@@ -1887,12 +1881,6 @@ function placeInFreeMode(
   const x = Math.round(cluster.x - tile.width / 2 + randomFloat(-spreadX, spreadX));
   const y = Math.round(cluster.y - tile.height / 2 + randomFloat(-spreadY, spreadY));
   return clampLayoutPosition(tile, x, y, cols, rows, layoutGuide);
-}
-
-function placeAnchor(cols, rows, width, height, layoutGuide = getLayoutGuide(cols, rows)) {
-  const x = Math.round(randomFloat(cols * 0.08, cols * 0.64 - width * 0.4));
-  const y = Math.round(randomFloat(rows * 0.06, rows * 0.62 - height * 0.35));
-  return clampLayoutPosition({ width, height }, x, y, cols, rows, layoutGuide);
 }
 
 function placeAroundAnchor(
