@@ -433,89 +433,9 @@ input[type="range"]::-moz-range-thumb {
   border: 0;
 }
 
-/* Discrete settings (grid, tone) sit above the sliders and look clearly operable. */
-.control-row.is-discrete + .control-row:not(.is-discrete) {
+/* grid and tone (quiet click-to-cycle rows) sit above the sliders */
+.controls .action-row + .control-row {
   margin-top: var(--s-2);
-}
-
-.stepper {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s-1);
-}
-
-.stepper-button,
-.segmented button {
-  appearance: none;
-  font: inherit;
-  cursor: pointer;
-}
-
-/* Values read as values: lowercase, no caps tracking (also keeps "strong" from clipping). */
-.stepper-value,
-.segmented button {
-  font-size: 13px;
-  letter-spacing: 0;
-  text-transform: none;
-}
-
-.stepper-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--text);
-  font-size: 15px;
-  line-height: 1;
-}
-
-.stepper-value {
-  min-width: 56px;
-  text-align: center;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-
-.segmented {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.segmented button {
-  min-height: 24px;
-  padding: 0 var(--s-half);
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-}
-
-.segmented button + button {
-  border-left: 1px solid var(--line);
-}
-
-.segmented button[aria-pressed="true"] {
-  background: var(--text);
-  color: var(--bg);
-}
-
-.stepper-button:hover,
-.segmented button:not([aria-pressed="true"]):hover {
-  background: var(--faint);
-  color: var(--text);
-}
-
-.stepper-button:disabled,
-.segmented button:disabled {
-  cursor: default;
-  opacity: 0.5;
 }
 
 .controls-reset {

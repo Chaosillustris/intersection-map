@@ -41,22 +41,14 @@
         </div>
 
         <div class="rail-block controls">
-          <div class="control-row is-discrete">
-            <span id="gridCaption">grid</span>
-            <div class="stepper" role="group" aria-labelledby="gridCaption">
-              <button class="stepper-button" id="gridPrevButton" type="button" aria-label="Previous grid">‹</button>
-              <span class="stepper-value" id="gridLabel" aria-live="polite">12 × 9</span>
-              <button class="stepper-button" id="gridButton" type="button" aria-label="Next grid">›</button>
-            </div>
-          </div>
-          <div class="control-row is-discrete">
-            <span id="toneCaption">tone</span>
-            <div class="segmented" role="group" aria-labelledby="toneCaption">
-              <button type="button" data-tone="off" aria-pressed="false">off</button>
-              <button type="button" data-tone="soft" aria-pressed="true">soft</button>
-              <button type="button" data-tone="strong" aria-pressed="false">strong</button>
-            </div>
-          </div>
+          <button class="meta-row action-row" id="gridButton" type="button">
+            <span>grid</span>
+            <span id="gridLabel">12 × 9</span>
+          </button>
+          <button class="meta-row action-row" id="toneButton" type="button">
+            <span>tone</span>
+            <span id="toneLabel">soft</span>
+          </button>
           <label class="control-row" for="densityRange">
             <span>size</span>
             <input id="densityRange" type="range" min="0" max="100" value="50" />
