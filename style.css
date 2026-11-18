@@ -1036,12 +1036,12 @@ input[type="range"]::-moz-range-thumb {
     font-size: 24px;
   }
 
+  /* On phones the actions wrap instead of scrolling: every button stays visible and in the
+     same place, so pressing "arrange" repeatedly never lands on a different button. */
   .stage-actions {
     justify-content: flex-start;
-  }
-
-  /* The row scrolls sideways on phones; keep the next-step button at its visible start. */
-  .stage-actions .cta {
-    order: -1;
+    flex-wrap: wrap;
+    row-gap: var(--s-1);
+    overflow-x: visible;
   }
 }

@@ -508,11 +508,20 @@ async function main() {
 
     const mobilePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await mobilePage.goto(url, { waitUntil: "domcontentloaded" });
-    await assertButtonsShareSingleRow(
-      mobilePage,
-      ["#uploadButton", "#updateButton", "#mutateButton", "#exportButton", "#clearButton"],
-      "Mobile action row wrapped unexpectedly",
-    );
+    // On phones the actions may wrap, but every one must be fully on screen.
+    const mobileActions = ["#uploadButton", "#updateButton", "#mutateButton", "#exportButton", "#clearButton"];
+    const readActionBoxes = async () => {
+      const boxes = [];
+      for (const selector of mobileActions) {
+        const box = await mobilePage.locator(selector).boundingBox();
+        assert(box, `Missing bounding box for ${selector}`);
+        boxes.push({ x: Math.round(box.x), y: Math.round(box.y), right: Math.round(box.x + box.width) });
+      }
+      return boxes;
+    };
+    for (const box of await readActionBoxes()) {
+      assert(box.x >= 0 && box.right <= 390, "Mobile action button is cut off the screen");
+    }
     await assertFileChooserOpens(
       mobilePage,
       "#uploadButton",
@@ -532,6 +541,22 @@ async function main() {
     await assertReadableMobileLayout(
       mobilePage,
       "Mobile upload layout should keep tiles readable inside the field",
+    );
+    // Moving the highlight between "export" and "arrange" must not move any button.
+    // Compare positions relative to the first button, so a page scroll does not count as movement.
+    const relativeBoxes = (boxes) => boxes.map((box) => ({ x: box.x - boxes[0].x, y: box.y - boxes[0].y }));
+    const positionsWithExportHighlighted = JSON.stringify(relativeBoxes(await readActionBoxes()));
+    await mobilePage.locator("#densityRange").evaluate((node) => {
+      node.value = "40";
+      node.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    assert(
+      await mobilePage.locator("#updateButton").evaluate((node) => node.classList.contains("cta")),
+      "Arrange should be highlighted after a setting change on mobile",
+    );
+    assert(
+      JSON.stringify(relativeBoxes(await readActionBoxes())) === positionsWithExportHighlighted,
+      "Mobile action buttons moved when the highlight changed",
     );
     await mobilePage.close();
 
