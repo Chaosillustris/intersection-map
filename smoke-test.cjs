@@ -223,7 +223,8 @@ async function main() {
       "#exportButton",
       "#clearButton",
       "#gridButton",
-      "#toneButton",
+      "#gridPrevButton",
+      '[data-tone="off"]',
       "#applyCanvasSizeButton",
     ];
 
@@ -271,11 +272,16 @@ async function main() {
     await page.click("#gridButton");
     const gridAfter = await text(page.locator("#gridLabel"));
     assert(gridBefore !== gridAfter, "Grid button did not cycle");
+    await page.click("#gridPrevButton");
+    assert((await text(page.locator("#gridLabel"))) === gridBefore, "Previous-grid button did not step back");
 
-    const toneBefore = await text(page.locator("#toneLabel"));
-    await page.click("#toneButton");
-    const toneAfter = await text(page.locator("#toneLabel"));
-    assert(toneBefore !== toneAfter, "Tone button did not cycle");
+    await page.click('[data-tone="strong"]');
+    assert(
+      (await page.locator('[data-tone="strong"]').getAttribute("aria-pressed")) === "true" &&
+        (await page.locator('[data-tone="soft"]').getAttribute("aria-pressed")) === "false",
+      "Tone switch did not select strong",
+    );
+    await page.click('[data-tone="soft"]');
 
     await page.locator("#densityRange").evaluate((node) => {
       node.value = "41";

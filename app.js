@@ -57,9 +57,9 @@ const elements = {
   compositionMode: document.getElementById("compositionMode"),
   anchorLabel: document.getElementById("anchorLabel"),
   gridButton: document.getElementById("gridButton"),
+  gridPrevButton: document.getElementById("gridPrevButton"),
   gridLabel: document.getElementById("gridLabel"),
-  toneButton: document.getElementById("toneButton"),
-  toneLabel: document.getElementById("toneLabel"),
+  toneButtons: Array.from(document.querySelectorAll("[data-tone]")),
   canvasLabel: document.getElementById("canvasLabel"),
   canvasWidthInput: document.getElementById("canvasWidthInput"),
   canvasHeightInput: document.getElementById("canvasHeightInput"),
@@ -147,8 +147,11 @@ function bindEvents() {
   elements.mutateButton.addEventListener("click", () => mutate());
   elements.exportButton.addEventListener("click", () => exportComposition());
   elements.clearButton.addEventListener("click", clearComposition);
-  elements.gridButton.addEventListener("click", cycleGrid);
-  elements.toneButton.addEventListener("click", cycleToneMode);
+  elements.gridButton.addEventListener("click", () => cycleGrid(1));
+  elements.gridPrevButton.addEventListener("click", () => cycleGrid(-1));
+  elements.toneButtons.forEach((button) => {
+    button.addEventListener("click", () => setToneMode(button.dataset.tone));
+  });
   elements.applyCanvasSizeButton.addEventListener("click", applyCanvasSize);
   elements.densityRange.addEventListener("input", handleControlInput);
   elements.overlapRange.addEventListener("input", handleControlInput);
@@ -1510,17 +1513,21 @@ async function retryFailedFiles() {
   await enqueueUpload(() => processIncomingFiles(files, { isRetry: true }));
 }
 
-function cycleGrid() {
-  state.gridIndex = (state.gridIndex + 1) % gridPresets.length;
+function cycleGrid(direction = 1) {
+  state.gridIndex = (state.gridIndex + direction + gridPresets.length) % gridPresets.length;
   state.pendingRefresh = true;
   saveSettings();
   clampTilesToGrid();
   render();
+  const { cols, rows } = getGrid();
+  setStatus(`Grid ${cols} × ${rows}.${state.tiles.length ? " Press update to reflow the layout." : ""}`, false);
 }
 
-function cycleToneMode() {
-  const currentIndex = toneModes.indexOf(state.controls.tone);
-  state.controls.tone = toneModes[(currentIndex + 1) % toneModes.length];
+function setToneMode(mode) {
+  if (!toneModes.includes(mode) || mode === state.controls.tone) {
+    return;
+  }
+  state.controls.tone = mode;
   state.pendingRefresh = true;
   saveSettings();
   render();
@@ -2006,7 +2013,9 @@ function renderMeta() {
   elements.workspace.style.setProperty("--workspace-ratio", String(ratio));
   elements.workspace.style.backgroundSize = `calc(100% / ${grid.cols}) calc(100% / ${grid.rows})`;
   elements.gridLabel.textContent = `${grid.cols} × ${grid.rows}`;
-  elements.toneLabel.textContent = state.controls.tone;
+  elements.toneButtons.forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.tone === state.controls.tone));
+  });
   elements.canvasLabel.textContent = `${state.canvas.width} × ${state.canvas.height}`;
   elements.photoCount.textContent = String(state.tiles.length);
   elements.layerCount.textContent = String(state.tiles.length);
@@ -2020,7 +2029,10 @@ function renderMeta() {
   const actionsDisabled = state.upload.active || state.tiles.length === 0;
   elements.uploadButton.setAttribute("aria-disabled", String(state.upload.active));
   elements.gridButton.disabled = state.upload.active;
-  elements.toneButton.disabled = state.upload.active;
+  elements.gridPrevButton.disabled = state.upload.active;
+  elements.toneButtons.forEach((button) => {
+    button.disabled = state.upload.active;
+  });
   elements.canvasWidthInput.disabled = state.upload.active;
   elements.canvasHeightInput.disabled = state.upload.active;
   elements.applyCanvasSizeButton.disabled = state.upload.active;
