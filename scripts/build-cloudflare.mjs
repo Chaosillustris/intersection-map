@@ -9,6 +9,11 @@ const publicDir = path.join(projectRoot, "public");
 
 const rootFiles = ["index.html", "style.css", "app.js", "version.js", "_headers"];
 
+// `npm run build` (vinext) leaves .wrangler/deploy/config.json behind. Wrangler follows that redirect to a
+// Worker config (main/rules/assets) and `wrangler pages deploy` then fails validation. The static Pages
+// bundle must be deployed with wrangler.toml, so drop the stale redirect.
+await rm(path.join(projectRoot, ".wrangler", "deploy", "config.json"), { force: true });
+
 await rm(outputDir, { recursive: true, force: true });
 await mkdir(outputDir, { recursive: true });
 

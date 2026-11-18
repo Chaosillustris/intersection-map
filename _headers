@@ -3,3 +3,5 @@
   Referrer-Policy: strict-origin-when-cross-origin
   X-Frame-Options: SAMEORIGIN
   Permissions-Policy: camera=(), microphone=(), geolocation=()
+/vendor/*
+  Cache-Control: public, max-age=604800

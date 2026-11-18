@@ -8,6 +8,24 @@ const imageOptimization = {
   jpegQuality: 0.86,
   webpQuality: 0.84,
 };
+const uploadLimits = {
+  // Hard ceiling: anything bigger is almost certainly not a photo the browser can decode on a phone.
+  maxFileSizeBytes: 120 * 1024 * 1024,
+  // Safety nets so a stuck decode can never freeze the upload queue (seen on iOS under memory pressure).
+  imageLoadTimeoutMs: 45000,
+  heicDecodeTimeoutMs: 120000,
+  decoderScriptTimeoutMs: 60000,
+  decoderScriptAttempts: 3,
+  fileReadAttempts: 2,
+};
+const appScriptBaseUrl = document.currentScript?.src || window.location.href;
+const heicDecoders = {
+  // libheif 1.19+ (heic-to) decodes current iPhone/Android HEIC files; heic2any (libheif 1.8) is a fallback only.
+  primary: { global: "HeicTo", path: "vendor/heic-to.iife.js" },
+  fallback: { global: "heic2any", path: "vendor/heic2any.min.js" },
+};
+const heicDecoderPromises = new Map();
+let uploadQueue = Promise.resolve();
 const toneModes = ["off", "soft", "strong"];
 
 const gridPresets = [
@@ -53,6 +71,7 @@ const elements = {
   appVersionLabel: document.getElementById("appVersionLabel"),
   appBuildLabel: document.getElementById("appBuildLabel"),
   fileInput: document.getElementById("fileInput"),
+  retryButton: document.getElementById("retryButton"),
   replaceInput: document.getElementById("replaceInput"),
 };
 
@@ -76,6 +95,7 @@ const state = {
     processed: 0,
     currentFile: "",
   },
+  failedFiles: [],
   layerDrag: {
     sourceId: null,
     targetId: null,
@@ -107,6 +127,7 @@ function bindEvents() {
   bindFilePickerTrigger(elements.dropOverlay);
   elements.fileInput.addEventListener("change", handleUpload);
   elements.replaceInput.addEventListener("change", handleReplace);
+  elements.retryButton?.addEventListener("click", retryFailedFiles);
   elements.updateButton.addEventListener("click", refreshComposition);
   elements.scatterButton.addEventListener("click", () => scatter());
   elements.mutateButton.addEventListener("click", () => mutate());
@@ -145,14 +166,21 @@ function bindFilePickerTrigger(element) {
     }
 
     event.preventDefault();
-    openFilePicker();
+    if (!state.upload.active) openFilePicker();
+  });
+  element.addEventListener("click", (event) => {
+    if (state.upload.active) event.preventDefault();
   });
 }
 
 function openFilePicker() {
   if (typeof elements.fileInput.showPicker === "function") {
-    elements.fileInput.showPicker();
-    return;
+    try {
+      elements.fileInput.showPicker();
+      return;
+    } catch {
+      // showPicker throws in cross-origin iframes and some mobile WebViews; fall back to click().
+    }
   }
 
   elements.fileInput.click();
@@ -293,48 +321,125 @@ function handleControlInput() {
 }
 
 async function handleUpload(event) {
-  const files = Array.from(event.target.files || []);
-  event.target.value = "";
-  await processIncomingFiles(files);
+  const input = event.target;
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
+  // Keep the input populated until the batch is processed: mobile browsers (iOS Safari, Android
+  // photo pickers) may invalidate the temporary File copies once the input is cleared, which made
+  // later photos in a batch fail with "Failed to load". Clearing afterwards still lets the user
+  // pick the same files again.
+  await enqueueUpload(() => processIncomingFiles(files));
+  if (input.files?.length && Array.from(input.files).every((file, index) => file === files[index])) {
+    input.value = "";
+  }
 }
 
 async function handleReplace(event) {
-  const file = event.target.files?.[0];
-  const tile = getSelectedTile();
-  if (!file || !tile || state.replaceTileId !== tile.id) {
-    event.target.value = "";
+  const input = event.target;
+  const file = input.files?.[0];
+  const tileId = state.replaceTileId;
+  state.replaceTileId = null;
+  if (!file || !tileId) {
+    input.value = "";
     return;
   }
+  await enqueueUpload(async () => {
+    const tile = getTile(tileId);
+    if (!tile) return;
+    beginUploadProgress(1);
+    updateUploadProgress(0, 1, file.name);
+    await nextFrame();
+    try {
+      if (!(await looksLikeImageFileAsync(file))) throw new Error("Choose an image file to replace this photo.");
+      const asset = await createAsset(file);
+      const previousAssetId = tile.assetId;
+      state.assets.push(asset);
+      tile.assetId = asset.id;
+      releaseUnusedAsset(previousAssetId);
+      setStatus(`Replaced ${tile.label}${asset.optimized ? ". Optimized for smoother editing" : ""}.`, false);
+    } catch (error) {
+      console.error("Replace failed", file.name, error);
+      setStatus(`${file.name}: ${describeUploadError(error)}`, true);
+    } finally {
+      endUploadProgress();
+    }
+  });
+  input.value = "";
+}
 
-  const asset = await createAsset(file);
-  state.assets.push(asset);
-  tile.assetId = asset.id;
-  event.target.value = "";
-  state.replaceTileId = null;
-  setStatus(
-    asset.optimized
-      ? `Replaced ${tile.label}. Optimized for smoother editing.`
-      : `Replaced ${tile.label}.`,
-    false,
-  );
-  render();
+function enqueueUpload(task) {
+  uploadQueue = uploadQueue.catch(() => {}).then(task).catch((error) => {
+    console.error("Upload task failed", error);
+    if (state.upload.active) endUploadProgress();
+    setStatus(describeUploadError(error, "Could not prepare photos. Please try again."), true);
+  });
+  return uploadQueue;
+}
+
+class UploadError extends Error {
+  constructor(message, { retryable = false, cause } = {}) {
+    super(message);
+    this.name = "UploadError";
+    this.retryable = retryable;
+    if (cause) this.cause = cause;
+  }
+}
+
+function describeUploadError(error, fallback = "Could not open this photo.") {
+  if (error instanceof UploadError) return error.message;
+  if (error?.name === "NotReadableError" || error?.name === "NotFoundError") {
+    return "the file could not be read. If it is stored in iCloud or Google Photos, wait for it to download and retry.";
+  }
+  if (error?.name === "QuotaExceededError" || /memory|allocation/i.test(error?.message || "")) {
+    return "not enough memory to open this photo. Try fewer photos at once.";
+  }
+  return error?.message || fallback;
+}
+
+function isRetryableError(error) {
+  if (error instanceof UploadError) return error.retryable;
+  return error?.name === "NotReadableError" || error?.name === "TimeoutError";
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  let timer = 0;
+  const timeout = new Promise((_, reject) => {
+    timer = window.setTimeout(() => reject(new UploadError(message, { retryable: true })), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => window.clearTimeout(timer));
+}
+
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 async function createAsset(file) {
+  if (file.size > uploadLimits.maxFileSizeBytes) {
+    throw new UploadError(`file is too large (${formatMegabytes(file.size)} MB, max ${formatMegabytes(uploadLimits.maxFileSizeBytes)} MB).`);
+  }
+  if (file.size === 0) {
+    throw new UploadError("file is empty. If it is stored in iCloud or Google Photos, wait for it to download and retry.", { retryable: true });
+  }
+
   const prepared = await prepareAssetSource(file);
-  return {
-    id: state.nextAssetId++,
-    name: file.name,
-    url: prepared.url,
-    img: prepared.img,
-    width: prepared.width,
-    height: prepared.height,
-    optimized: prepared.optimized,
-    resized: prepared.resized,
-    originalByteSize: file.size,
-    byteSize: prepared.blob.size,
-    tone: analyzeToneProfile(prepared.img),
-  };
+  try {
+    return {
+      id: state.nextAssetId++,
+      name: file.name,
+      url: prepared.url,
+      img: prepared.img,
+      width: prepared.width,
+      height: prepared.height,
+      optimized: prepared.optimized,
+      resized: prepared.resized,
+      originalByteSize: file.size,
+      byteSize: prepared.blob.size,
+      tone: analyzeToneProfile(prepared.img),
+    };
+  } catch (error) {
+    URL.revokeObjectURL(prepared.url);
+    throw error;
+  }
 }
 
 function looksLikeImageFile(file) {
@@ -349,15 +454,95 @@ function looksLikeImageFile(file) {
   return /\.(avif|bmp|gif|heic|heif|jpe?g|png|svg|tiff?|webp)$/i.test(file.name || "");
 }
 
+// Some Android pickers and file managers hand over photos with no extension and an empty or
+// generic MIME type ("image:1234", application/octet-stream). Sniff the header instead of
+// silently dropping them as "non-image".
+async function looksLikeImageFileAsync(file) {
+  if (looksLikeImageFile(file)) return true;
+  if (!file || file.size < 12) return false;
+  if (file.type && file.type !== "application/octet-stream") return false;
+  try {
+    return Boolean(await sniffImageType(file));
+  } catch {
+    return false;
+  }
+}
+
+async function sniffImageType(file) {
+  const bytes = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+  const ascii = (start, end) => String.fromCharCode(...bytes.slice(start, end));
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes[0] === 0x89 && ascii(1, 4) === "PNG") return "image/png";
+  if (ascii(0, 3) === "GIF") return "image/gif";
+  if (ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP") return "image/webp";
+  if (ascii(4, 8) === "ftyp") {
+    const brand = ascii(8, 12);
+    if (/^(heic|heix|hevc|hevx|heim|heis|mif1|msf1)$/.test(brand)) return "image/heic";
+    if (/^(avif|avis)$/.test(brand)) return "image/avif";
+  }
+  return "";
+}
+
+async function isHeicContent(file) {
+  if (isHeicFile(file)) return true;
+  try {
+    return (await sniffImageType(file)) === "image/heic";
+  } catch {
+    return false;
+  }
+}
+
+// Load a blob as an <img>, retrying once from an in-memory copy. On mobile, a File backed by a
+// photo-library/cloud provider can fail the first read (NotReadableError / img error) and succeed
+// once its bytes are copied.
+async function loadImageWithRetry(file) {
+  let lastError = null;
+  for (let attempt = 0; attempt < uploadLimits.fileReadAttempts; attempt += 1) {
+    try {
+      const blob = attempt === 0 ? file : await copyFileToMemory(file);
+      const source = await loadImageSource(blob, file.name);
+      return { source, blob };
+    } catch (error) {
+      lastError = error;
+      if (error?.name === "NotFoundError") break;
+      await delay(150);
+    }
+  }
+  throw lastError;
+}
+
+async function copyFileToMemory(file) {
+  const buffer = await file.arrayBuffer();
+  if (!buffer.byteLength) {
+    throw new UploadError("file is empty. If it is stored in iCloud or Google Photos, wait for it to download and retry.", { retryable: true });
+  }
+  return new Blob([buffer], { type: file.type || (await sniffImageType(file)) || "" });
+}
+
 async function prepareAssetSource(file) {
-  const source = await loadImageSource(file, file.name);
+  let blob = file;
+  let converted = false;
+  let source;
+  const heic = await isHeicContent(file);
+  try {
+    // Safari decodes HEIC natively; other browsers fail fast and fall through to the WASM decoder.
+    ({ source, blob } = await loadImageWithRetry(file));
+  } catch (error) {
+    if (!heic) {
+      if (error instanceof UploadError || error?.name === "NotReadableError") throw error;
+      throw new UploadError("this image format is not supported by your browser, or the file is damaged.", { cause: error });
+    }
+    blob = await convertHeic(file);
+    converted = true;
+    source = await loadImageSource(blob, file.name);
+  }
   const shouldOptimize = shouldOptimizeImage(file, source.width, source.height);
 
   if (!shouldOptimize) {
     return {
       ...source,
-      blob: file,
-      optimized: false,
+      blob,
+      optimized: converted,
       resized: false,
     };
   }
@@ -370,29 +555,141 @@ async function prepareAssetSource(file) {
   if (!optimizedBlob) {
     return {
       ...source,
-      blob: file,
-      optimized: false,
+      blob,
+      optimized: converted,
       resized: false,
     };
   }
 
-  if (!resized && optimizedBlob.size >= file.size * 0.98) {
+  if (!resized && optimizedBlob.size >= blob.size * 0.98) {
     return {
       ...source,
-      blob: file,
-      optimized: false,
+      blob,
+      optimized: converted,
       resized: false,
     };
   }
 
+  let optimizedSource;
+  try {
+    optimizedSource = await loadImageSource(optimizedBlob, file.name);
+  } catch {
+    return { ...source, blob, optimized: converted, resized: false };
+  }
   URL.revokeObjectURL(source.url);
-  const optimizedSource = await loadImageSource(optimizedBlob, file.name);
   return {
     ...optimizedSource,
     blob: optimizedBlob,
     optimized: true,
     resized,
   };
+}
+
+function isHeicFile(file) {
+  return /\.(heic|heif)$/i.test(file.name || "") || /^image\/(heic|heif)$/i.test(file.type || "");
+}
+
+function resolveAppAssetUrl(relativePath) {
+  return new URL(relativePath, appScriptBaseUrl).href;
+}
+
+function loadScriptOnce(src, globalName, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      if (error) {
+        script.remove();
+        reject(error);
+        return;
+      }
+      resolve(window[globalName]);
+    };
+    const timer = window.setTimeout(
+      () => finish(new UploadError("HEIC decoder download timed out. Check your connection and retry.", { retryable: true })),
+      timeoutMs,
+    );
+    script.async = true;
+    script.src = src;
+    script.dataset.heicDecoder = globalName;
+    script.onload = () => window[globalName]
+      ? finish()
+      : finish(new UploadError("HEIC decoder unavailable. Please retry.", { retryable: true }));
+    script.onerror = () => finish(new UploadError("HEIC decoder could not load. Check your connection and retry.", { retryable: true }));
+    document.head.append(script);
+  });
+}
+
+function loadHeicDecoder(kind = "primary") {
+  const config = heicDecoders[kind];
+  if (window[config.global]) return Promise.resolve(window[config.global]);
+  if (!heicDecoderPromises.has(kind)) {
+    const promise = (async () => {
+      let lastError = null;
+      for (let attempt = 0; attempt < uploadLimits.decoderScriptAttempts; attempt += 1) {
+        if (attempt > 0) {
+          if (!navigator.onLine) break;
+          await delay(600 * 2 ** (attempt - 1));
+        }
+        const url = new URL(resolveAppAssetUrl(config.path));
+        if (attempt > 0) url.searchParams.set("retry", String(Date.now()));
+        try {
+          return await loadScriptOnce(url.href, config.global, uploadLimits.decoderScriptTimeoutMs);
+        } catch (error) {
+          lastError = error;
+          console.warn(`HEIC decoder load attempt ${attempt + 1} failed`, error);
+        }
+      }
+      throw lastError || new UploadError("HEIC decoder could not load. Check your connection and retry.", { retryable: true });
+    })().catch((error) => {
+      // Never cache a failure: the next upload (or the retry button) starts a fresh download.
+      heicDecoderPromises.delete(kind);
+      throw error;
+    });
+    heicDecoderPromises.set(kind, promise);
+  }
+  return heicDecoderPromises.get(kind);
+}
+
+async function convertHeic(file) {
+  const input = await copyFileToMemory(file).catch((error) => {
+    throw error instanceof UploadError ? error : new UploadError(describeUploadError(error), { retryable: true, cause: error });
+  });
+
+  let primaryError = null;
+  try {
+    const heicTo = await loadHeicDecoder("primary");
+    const blob = await withTimeout(
+      heicTo({ blob: input, type: "image/jpeg", quality: 0.92 }),
+      uploadLimits.heicDecodeTimeoutMs,
+      "HEIC decoding took too long. Try fewer photos at once.",
+    );
+    if (blob instanceof Blob && blob.size) return blob;
+    primaryError = new Error("Empty HEIC decoder output");
+  } catch (error) {
+    if (error instanceof UploadError && /could not load|timed out|unavailable/i.test(error.message)) throw error;
+    primaryError = error;
+  }
+
+  console.warn("HEIC primary decoder failed, trying fallback", primaryError);
+  try {
+    const heic2any = await loadHeicDecoder("fallback");
+    const result = await withTimeout(
+      heic2any({ blob: input, toType: "image/jpeg", quality: 0.92 }),
+      uploadLimits.heicDecodeTimeoutMs,
+      "HEIC decoding took too long. Try fewer photos at once.",
+    );
+    const blob = Array.isArray(result) ? result[0] : result;
+    if (blob instanceof Blob && blob.size) return blob;
+    throw new Error("Empty HEIC decoder output");
+  } catch (error) {
+    console.error("HEIC decoding failed", primaryError, error);
+    if (error instanceof UploadError && error.retryable) throw error;
+    throw new UploadError("HEIC photo could not be decoded. Try exporting it as JPEG.", { cause: error });
+  }
 }
 
 function shouldOptimizeImage(file, width, height) {
@@ -434,14 +731,13 @@ function getOptimizedDimensions(width, height) {
 
 async function renderOptimizedBlob(file, img, targetSize) {
   const canvas = document.createElement("canvas");
-  canvas.width = targetSize.width;
-  canvas.height = targetSize.height;
+  try {
+    canvas.width = targetSize.width;
+    canvas.height = targetSize.height;
 
-  const preserveAlpha = preservesAlpha(file);
-  const context = canvas.getContext("2d", { alpha: preserveAlpha });
-  if (!context) {
-    return null;
-  }
+    const preserveAlpha = preservesAlpha(file);
+    const context = canvas.getContext("2d", { alpha: preserveAlpha });
+    if (!context) return null;
 
   if (!preserveAlpha) {
     context.fillStyle = "#ffffff";
@@ -461,9 +757,13 @@ async function renderOptimizedBlob(file, img, targetSize) {
     (await canvasToBlob(canvas, preferredType, preferredQuality)) ||
     (await canvasToBlob(canvas, "image/jpeg", imageOptimization.jpegQuality));
 
-  canvas.width = 1;
-  canvas.height = 1;
-  return blob;
+    return blob;
+  } catch {
+    return null;
+  } finally {
+    canvas.width = 1;
+    canvas.height = 1;
+  }
 }
 
 function preservesAlpha(file) {
@@ -487,18 +787,39 @@ function loadImageSource(blob, label = "image") {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(blob);
     const img = new Image();
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      img.onload = null;
+      img.onerror = null;
+      img.removeAttribute("src");
+      URL.revokeObjectURL(url);
+      reject(error);
+    };
+    // iOS Safari occasionally never fires load/error for very large photos under memory pressure.
+    const timer = window.setTimeout(
+      () => fail(new UploadError("opening the photo took too long. Try again or use a smaller image.", { retryable: true })),
+      uploadLimits.imageLoadTimeoutMs,
+    );
     img.decoding = "async";
-    img.onload = () =>
+    img.onload = () => {
+      if (settled) return;
+      if (!img.naturalWidth || !img.naturalHeight) {
+        fail(new Error(`Failed to load ${label}`));
+        return;
+      }
+      settled = true;
+      window.clearTimeout(timer);
       resolve({
         url,
         img,
         width: img.naturalWidth,
         height: img.naturalHeight,
       });
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error(`Failed to load ${label}`));
     };
+    img.onerror = () => fail(new Error(`Failed to load ${label}`));
     img.src = url;
   });
 }
@@ -955,11 +1276,12 @@ async function handleWorkspaceDrop(event) {
   event.preventDefault();
   const files = Array.from(event.dataTransfer?.files || []);
   clearDropTarget();
-  await processIncomingFiles(files);
+  await enqueueUpload(() => processIncomingFiles(files));
 }
 
-async function processIncomingFiles(selectedFiles) {
-  const files = selectedFiles.filter(looksLikeImageFile);
+async function processIncomingFiles(selectedFiles, { isRetry = false } = {}) {
+  const typeChecks = await Promise.all(selectedFiles.map((file) => looksLikeImageFileAsync(file)));
+  const files = selectedFiles.filter((_, index) => typeChecks[index]);
   const skippedByType = selectedFiles.length - files.length;
 
   if (!files.length) {
@@ -970,8 +1292,10 @@ async function processIncomingFiles(selectedFiles) {
   const isInitialUpload = state.tiles.length === 0;
   const newTileIds = [];
   const failedFiles = [];
+  const retryableFiles = [];
   const optimizedAssets = [];
 
+  if (!isRetry) setFailedFiles([]);
   beginUploadProgress(files.length);
   await nextFrame();
   try {
@@ -987,16 +1311,20 @@ async function processIncomingFiles(selectedFiles) {
         if (asset.optimized) {
           optimizedAssets.push(asset);
         }
-      } catch {
-        failedFiles.push(file.name);
+      } catch (error) {
+        console.error("Photo upload failed", file.name, error);
+        failedFiles.push(`${file.name}: ${describeUploadError(error, "could not open photo")}`);
+        if (isRetryableError(error)) retryableFiles.push(file);
       }
     }
   } finally {
     endUploadProgress();
   }
 
+  setFailedFiles(retryableFiles);
+
   if (!newTileIds.length) {
-    setStatus("The selected files could not be opened by this browser.", true);
+    setStatus(`Could not add photos. ${failedFiles.slice(0, 2).join("; ") || "Choose supported image files."}`, true);
     return;
   }
 
@@ -1013,8 +1341,8 @@ async function processIncomingFiles(selectedFiles) {
   const skippedCount = skippedByType + failedFiles.length;
   if (skippedCount) {
     setStatus(
-      `Added ${newTileIds.length} photo${newTileIds.length === 1 ? "" : "s"}. ${optimizationMessage}Skipped ${skippedCount} unsupported file${skippedCount === 1 ? "" : "s"}.`,
-      false,
+      `Added ${newTileIds.length} photo${newTileIds.length === 1 ? "" : "s"}. ${optimizationMessage}${skippedByType ? `${skippedByType} non-image file${skippedByType === 1 ? "" : "s"} skipped. ` : ""}${failedFiles.length ? `Could not open: ${failedFiles.slice(0, 2).join("; ")}${failedFiles.length > 2 ? `; ${failedFiles.length - 2} more` : ""}.` : ""}`,
+      failedFiles.length > 0,
     );
     return;
   }
@@ -1023,6 +1351,18 @@ async function processIncomingFiles(selectedFiles) {
     `Added ${newTileIds.length} photo${newTileIds.length === 1 ? "" : "s"}. ${optimizationMessage}`.trim(),
     false,
   );
+}
+
+function setFailedFiles(files) {
+  state.failedFiles = files;
+  renderMeta();
+}
+
+async function retryFailedFiles() {
+  if (state.upload.active || !state.failedFiles.length) return;
+  const files = state.failedFiles;
+  setFailedFiles([]);
+  await enqueueUpload(() => processIncomingFiles(files, { isRetry: true }));
 }
 
 function cycleGrid() {
@@ -1420,18 +1760,22 @@ function renderMeta() {
     : "or click to browse";
 
   const actionsDisabled = state.upload.active || state.tiles.length === 0;
-  elements.uploadButton.disabled = state.upload.active;
+  elements.uploadButton.setAttribute("aria-disabled", String(state.upload.active));
   elements.gridButton.disabled = state.upload.active;
   elements.toneButton.disabled = state.upload.active;
   elements.canvasWidthInput.disabled = state.upload.active;
   elements.canvasHeightInput.disabled = state.upload.active;
   elements.applyCanvasSizeButton.disabled = state.upload.active;
-  elements.dropOverlay.disabled = state.upload.active;
+  elements.dropOverlay.setAttribute("aria-disabled", String(state.upload.active));
   elements.updateButton.disabled = actionsDisabled;
   elements.scatterButton.disabled = actionsDisabled;
   elements.mutateButton.disabled = actionsDisabled;
   elements.exportButton.disabled = actionsDisabled;
   elements.clearButton.disabled = actionsDisabled;
+  if (elements.retryButton) {
+    elements.retryButton.hidden = state.upload.active || state.failedFiles.length === 0;
+    elements.retryButton.textContent = `retry ${state.failedFiles.length} failed`;
+  }
   elements.updateButton.textContent = state.pendingRefresh ? "update *" : "update";
 }
 
@@ -1797,6 +2141,7 @@ function renderInspector() {
 }
 
 function runInspectorAction(action) {
+  if (state.upload.active) return;
   const tile = getSelectedTile();
   if (!tile) {
     return;
@@ -1849,6 +2194,7 @@ function runInspectorAction(action) {
 
   if (action === "delete") {
     state.tiles = state.tiles.filter((item) => item.id !== tile.id);
+    releaseUnusedAsset(tile.assetId);
     if (state.anchorId === tile.id) {
       state.anchorId = null;
     }
@@ -1857,6 +2203,13 @@ function runInspectorAction(action) {
     updateUploadLabel();
     render();
   }
+}
+
+function releaseUnusedAsset(assetId) {
+  if (state.tiles.some((tile) => tile.assetId === assetId)) return;
+  const asset = getAsset(assetId);
+  if (asset) URL.revokeObjectURL(asset.url);
+  state.assets = state.assets.filter((item) => item.id !== assetId);
 }
 
 function updateUploadLabel() {
@@ -1879,6 +2232,7 @@ function clearComposition() {
   state.replaceTileId = null;
   state.pendingRefresh = false;
   state.interaction = null;
+  state.failedFiles = [];
   updateUploadLabel();
   render();
   setStatus("Workspace cleared. Field size and controls were kept.", false);
@@ -1952,8 +2306,17 @@ function truncateMiddle(value, maxLength) {
 }
 
 function nextFrame() {
+  // requestAnimationFrame is paused while the page is hidden (e.g. the iOS photo picker is still
+  // closing, or the user switched apps) and throttled in some in-app browsers; never wait on it alone.
   return new Promise((resolve) => {
-    requestAnimationFrame(() => resolve());
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    requestAnimationFrame(finish);
+    window.setTimeout(finish, 100);
   });
 }
 

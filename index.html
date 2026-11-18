@@ -8,7 +8,7 @@
       content="Intersection Map is a browser-based composition field for arranging photographs into experimental editorial layouts."
     />
     <meta name="theme-color" content="#eaedf0" />
-    <meta name="application-version" content="1.0.2" />
+    <meta name="application-version" content="1.0.3" />
     <title>intersection map / 01</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
@@ -17,7 +17,7 @@
       <aside class="rail">
         <div class="rail-block masthead">
           <p class="kicker">intersection map / 01</p>
-          <p class="version-tag">version <span id="appVersionLabel">1.0.2</span> <span id="appBuildLabel"></span></p>
+          <p class="version-tag">version <span id="appVersionLabel">1.0.3</span> <span id="appBuildLabel"></span></p>
         </div>
 
         <div class="rail-block meta">
@@ -96,7 +96,10 @@
             <button class="text-action" id="clearButton" type="button">clear all</button>
           </div>
         </div>
-        <p class="status-note stage-status" id="statusNote" aria-live="polite"></p>
+        <div class="stage-status-row">
+          <p class="status-note stage-status" id="statusNote" aria-live="polite"></p>
+          <button class="text-action retry-action" id="retryButton" type="button" hidden>retry failed</button>
+        </div>
         <div class="stage-rule"></div>
         <div class="workspace-layout">
           <div class="workspace-frame">
@@ -131,8 +134,8 @@
       </main>
     </div>
 
-    <input id="fileInput" class="visually-hidden-input" type="file" accept="image/*" multiple />
-    <input id="replaceInput" class="visually-hidden-input" type="file" accept="image/*" />
+    <input id="fileInput" class="visually-hidden-input" type="file" accept="image/*,.heic,.heif" multiple />
+    <input id="replaceInput" class="visually-hidden-input" type="file" accept="image/*,.heic,.heif" />
 
     <script src="./version.js"></script>
     <script src="./app.js"></script>

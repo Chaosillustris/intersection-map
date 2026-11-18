@@ -6,7 +6,7 @@ export default function Home() {
           <div className="rail-block masthead">
             <p className="kicker">intersection map / 01</p>
             <p className="version-tag">
-              version <span id="appVersionLabel">1.0.2</span> <span id="appBuildLabel"></span>
+              version <span id="appVersionLabel">1.0.3</span> <span id="appBuildLabel"></span>
             </p>
           </div>
 
@@ -100,7 +100,12 @@ export default function Home() {
               </button>
             </div>
           </div>
-          <p className="status-note stage-status" id="statusNote" aria-live="polite"></p>
+          <div className="stage-status-row">
+            <p className="status-note stage-status" id="statusNote" aria-live="polite"></p>
+            <button className="text-action retry-action" id="retryButton" type="button" hidden>
+              retry failed
+            </button>
+          </div>
           <div className="stage-rule"></div>
           <div className="workspace-layout">
             <div className="workspace-frame">
@@ -143,8 +148,8 @@ export default function Home() {
         </main>
       </div>
 
-      <input id="fileInput" className="visually-hidden-input" type="file" accept="image/*" multiple />
-      <input id="replaceInput" className="visually-hidden-input" type="file" accept="image/*" />
+      <input id="fileInput" className="visually-hidden-input" type="file" accept="image/*,.heic,.heif" multiple />
+      <input id="replaceInput" className="visually-hidden-input" type="file" accept="image/*,.heic,.heif" />
       <script src="/version.js" defer></script>
       <script src="/app.js" defer></script>
     </>

@@ -23,3 +23,4 @@ await mkdir(publicDir, { recursive: true });
 await writeFile(versionScriptPath, versionScript);
 await writeFile(publicVersionScriptPath, versionScript);
 await cp(path.join(projectRoot, "app.js"), path.join(publicDir, "app.js"));
+await cp(path.join(projectRoot, "vendor"), path.join(publicDir, "vendor"), { recursive: true });

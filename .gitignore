@@ -34,3 +34,6 @@ yarn-error.log*
 /.wrangler/
 /outputs/
 /work/
+
+# local exports (personal documents)
+/output/

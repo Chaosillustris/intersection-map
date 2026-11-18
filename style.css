@@ -197,6 +197,11 @@ button {
   user-select: none;
 }
 
+.upload-trigger[aria-disabled="true"],
+.drop-overlay[aria-disabled="true"] {
+  cursor: progress;
+}
+
 .visually-hidden-input {
   position: absolute;
   width: 1px;
@@ -246,6 +251,25 @@ button:focus-visible {
 
 .stage-status {
   margin-top: -0.15rem;
+}
+
+.stage-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.9rem;
+  row-gap: 0.2rem;
+}
+
+.stage-status-row .retry-action {
+  margin-top: 0;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+  min-height: 1.6rem;
+}
+
+.retry-action[hidden] {
+  display: none;
 }
 
 .control-row {

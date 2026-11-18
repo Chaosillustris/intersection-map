@@ -203,6 +203,7 @@ async function main() {
     "intersection-map-b.png",
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AApMBgU6PvxQAAAAASUVORK5CYII=",
   );
+  const heicImage = path.join(rootDir, "tests", "fixtures", "sample.heic");
 
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1200 } });
@@ -242,7 +243,7 @@ async function main() {
     assert(await page.locator("#exportButton").isDisabled(), "Export should start disabled");
     assert(await page.locator("#clearButton").isDisabled(), "Clear all should start disabled");
     assert(
-      /^1\.0\.2$/.test((await text(page.locator("#appVersionLabel"))).replace(/^v/i, "")),
+      /^1\.0\.3$/.test((await text(page.locator("#appVersionLabel"))).replace(/^v/i, "")),
       "Version label did not render",
     );
     assert(
@@ -430,6 +431,105 @@ async function main() {
       "Mobile upload layout should keep tiles readable inside the field",
     );
     await mobilePage.close();
+
+    const uploadPage = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    uploadPage.on("console", (message) => { if (message.type() === "error") console.log("browser console:", message.text()); });
+    await uploadPage.goto(url, { waitUntil: "domcontentloaded" });
+
+    // Network failure while downloading the HEIC decoder: automatic retries, then a clear error,
+    // closed overlay and a visible "retry failed" action.
+    let decoderRequests = 0;
+    await uploadPage.route("**/vendor/heic-to.iife.js*", (route) => { decoderRequests += 1; return route.abort(); });
+    await uploadPage.locator("#fileInput").setInputFiles(heicImage);
+    await uploadPage.waitForFunction(() => document.getElementById("statusNote")?.textContent?.includes("HEIC decoder could not load"), null, { timeout: 20000 });
+    assert(decoderRequests >= 2, `HEIC decoder download was not retried automatically (${decoderRequests} request)`);
+    assert(await uploadPage.locator("#loadingOverlay").getAttribute("aria-hidden") === "true", "Failed HEIC load left loading overlay open");
+    assert(await uploadPage.locator("#retryButton").isVisible(), "Retry action should appear after a network failure");
+    assert(!(await uploadPage.locator("#uploadButton").getAttribute("aria-disabled") === "true"), "Upload trigger stayed disabled after failure");
+    await uploadPage.unroute("**/vendor/heic-to.iife.js*");
+    await uploadPage.click("#retryButton");
+    try {
+      await uploadPage.waitForFunction(() => document.getElementById("photoCount")?.textContent === "1", null, { timeout: 30000 });
+    } catch (error) {
+      throw new Error(`HEIC retry failed: ${await text(uploadPage.locator("#statusNote"))}; ${error.message}`);
+    }
+    assert(!(await uploadPage.locator("#statusNote").getAttribute("class"))?.includes("is-error"), "HEIC retry reported an error");
+    assert(!(await uploadPage.locator("#retryButton").isVisible()), "Retry action should hide after a successful retry");
+
+    // Photos handed over without extension or MIME type (Android pickers) must still be accepted.
+    const heicBase64 = fs.readFileSync(heicImage).toString("base64");
+    await uploadPage.evaluate(async ({ heicBase64, pngBase64 }) => {
+      const toBytes = (value) => Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([toBytes(heicBase64)], "image:1001", { type: "" }));
+      transfer.items.add(new File([toBytes(pngBase64)], "image:1002", { type: "application/octet-stream" }));
+      const input = document.getElementById("fileInput");
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }, { heicBase64, pngBase64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn8j3cAAAAASUVORK5CYII=" });
+    try {
+      await uploadPage.waitForFunction(() => document.getElementById("photoCount")?.textContent === "3", null, { timeout: 30000 });
+    } catch (error) {
+      throw new Error(`Extensionless upload failed: ${await text(uploadPage.locator("#statusNote"))}; ${error.message}`);
+    }
+
+    // A damaged file fails with a readable message, does not offer a pointless retry and does not
+    // block the next upload.
+    const brokenImage = path.join(os.tmpdir(), "intersection-map-broken.jpg");
+    fs.writeFileSync(brokenImage, Buffer.from("not really a jpeg"));
+    await uploadPage.locator("#fileInput").setInputFiles(brokenImage);
+    await uploadPage.waitForFunction(() => /not supported|damaged/i.test(document.getElementById("statusNote")?.textContent || ""));
+    assert(await uploadPage.locator("#loadingOverlay").getAttribute("aria-hidden") === "true", "Broken file left loading overlay open");
+    assert(!(await uploadPage.locator("#retryButton").isVisible()), "Broken file should not offer retry");
+    await uploadPage.click("#clearButton");
+    await uploadPage.waitForFunction(() => document.getElementById("photoCount")?.textContent === "0");
+    await uploadPage.locator("#fileInput").setInputFiles(heicImage);
+    await uploadPage.waitForFunction(() => document.getElementById("photoCount")?.textContent === "1", null, { timeout: 30000 });
+
+    await uploadPage.evaluate(async () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 2600;
+      canvas.height = 2200;
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#a17b60";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([blob], "large.png", { type: "image/png" }));
+      const input = document.getElementById("fileInput");
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await uploadPage.locator("#fileInput").setInputFiles(imageA);
+    await uploadPage.waitForFunction(() => document.getElementById("photoCount")?.textContent === "3");
+    assert((await uploadPage.locator(".tile").count()) === 3, "Back-to-back uploads lost or duplicated a photo");
+    assert(await uploadPage.locator("#loadingOverlay").getAttribute("aria-hidden") === "true", "Upload left loading overlay open");
+    const displayedWidths = await uploadPage.locator(".tile img").evaluateAll((nodes) => nodes.map((node) => node.naturalWidth));
+    assert(displayedWidths.includes(2048), "Large image was not reduced to 2048 pixels");
+    await uploadPage.close();
+
+    // Hidden page / throttled WebView: requestAnimationFrame never fires, upload must still finish.
+    const hiddenPage = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    await hiddenPage.addInitScript(() => { window.requestAnimationFrame = () => 0; });
+    await hiddenPage.goto(url, { waitUntil: "domcontentloaded" });
+    await hiddenPage.locator("#fileInput").setInputFiles(imageA);
+    await hiddenPage.waitForFunction(() => document.getElementById("photoCount")?.textContent === "1", null, { polling: 100, timeout: 5000 });
+
+    // A decode that never answers (iOS under memory pressure) must time out instead of freezing the queue.
+    await hiddenPage.route("**/never-loads.png", () => {});
+    await hiddenPage.evaluate((origin) => {
+      uploadLimits.imageLoadTimeoutMs = 400;
+      window.__originalCreateObjectURL = URL.createObjectURL;
+      URL.createObjectURL = () => `${origin}never-loads.png`;
+    }, url);
+    await hiddenPage.locator("#fileInput").setInputFiles(imageB);
+    await hiddenPage.waitForFunction(() => /took too long/i.test(document.getElementById("statusNote")?.textContent || ""), null, { polling: 100, timeout: 8000 });
+    assert(await hiddenPage.locator("#loadingOverlay").getAttribute("aria-hidden") === "true", "Timed-out decode left loading overlay open");
+    assert(await hiddenPage.locator("#retryButton").isVisible(), "Timed-out decode should offer retry");
+    await hiddenPage.evaluate(() => { URL.createObjectURL = window.__originalCreateObjectURL; });
+    await hiddenPage.click("#retryButton");
+    await hiddenPage.waitForFunction(() => document.getElementById("photoCount")?.textContent === "2", null, { polling: 100, timeout: 5000 });
+    await hiddenPage.close();
 
     console.log("smoke-test: ok");
   } finally {
