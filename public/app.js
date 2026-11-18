@@ -48,13 +48,11 @@ const layoutAttempts = 8;
 
 const elements = {
   workspace: document.getElementById("workspace"),
-  emptyState: document.getElementById("emptyState"),
   dropOverlay: document.getElementById("dropOverlay"),
   loadingOverlay: document.getElementById("loadingOverlay"),
   loadingTitle: document.getElementById("loadingTitle"),
   loadingMeta: document.getElementById("loadingMeta"),
   photoCount: document.getElementById("photoCount"),
-  compositionMode: document.getElementById("compositionMode"),
   anchorLabel: document.getElementById("anchorLabel"),
   gridButton: document.getElementById("gridButton"),
   gridLabel: document.getElementById("gridLabel"),
@@ -66,7 +64,6 @@ const elements = {
   applyCanvasSizeButton: document.getElementById("applyCanvasSizeButton"),
   uploadButton: document.getElementById("uploadButton"),
   updateButton: document.getElementById("updateButton"),
-  scatterButton: document.getElementById("scatterButton"),
   mutateButton: document.getElementById("mutateButton"),
   exportButton: document.getElementById("exportButton"),
   clearButton: document.getElementById("clearButton"),
@@ -143,7 +140,6 @@ function bindEvents() {
   elements.replaceInput.addEventListener("change", handleReplace);
   elements.retryButton?.addEventListener("click", retryFailedFiles);
   elements.updateButton.addEventListener("click", refreshComposition);
-  elements.scatterButton.addEventListener("click", () => scatter());
   elements.mutateButton.addEventListener("click", () => mutate());
   elements.exportButton.addEventListener("click", () => exportComposition());
   elements.clearButton.addEventListener("click", clearComposition);
@@ -335,7 +331,7 @@ function handleControlInput() {
   saveSettings();
   renderMeta();
   setStatus(
-    `Size ${describeControlLevel(state.controls.density)}, overlap ${describeControlLevel(state.controls.overlap)}, variation ${describeControlLevel(state.controls.variation)}, air ${describeControlLevel(state.controls.air)}. Press update to reflow the composition.`,
+    `Size ${describeControlLevel(state.controls.density)}, overlap ${describeControlLevel(state.controls.overlap)}, variation ${describeControlLevel(state.controls.variation)}, air ${describeControlLevel(state.controls.air)}. Press arrange to apply.`,
     false,
   );
 }
@@ -370,7 +366,7 @@ async function handleReplace(event) {
     updateUploadProgress(0, 1, file.name);
     await nextFrame();
     try {
-      if (!(await looksLikeImageFileAsync(file))) throw new Error("Choose an image file to replace this photo.");
+      if (!(await looksLikeImageFileAsync(file))) throw new Error("Choose an image file to use instead.");
       const asset = await createAsset(file);
       const previousAssetId = tile.assetId;
       state.assets.push(asset);
@@ -391,7 +387,7 @@ function enqueueUpload(task) {
   uploadQueue = uploadQueue.catch(() => {}).then(task).catch((error) => {
     console.error("Upload task failed", error);
     if (state.upload.active) endUploadProgress();
-    setStatus(describeUploadError(error, "Could not prepare photos. Please try again."), true);
+    setStatus(describeUploadError(error, "Could not prepare images. Please try again."), true);
   });
   return uploadQueue;
 }
@@ -405,13 +401,13 @@ class UploadError extends Error {
   }
 }
 
-function describeUploadError(error, fallback = "Could not open this photo.") {
+function describeUploadError(error, fallback = "Could not open this image.") {
   if (error instanceof UploadError) return error.message;
   if (error?.name === "NotReadableError" || error?.name === "NotFoundError") {
     return "the file could not be read. If it is stored in iCloud or Google Photos, wait for it to download and retry.";
   }
   if (error?.name === "QuotaExceededError" || /memory|allocation/i.test(error?.message || "")) {
-    return "not enough memory to open this photo. Try fewer photos at once.";
+    return "not enough memory to open this image. Try fewer images at once.";
   }
   return error?.message || fallback;
 }
@@ -685,7 +681,7 @@ async function convertHeic(file) {
     const blob = await withTimeout(
       heicTo({ blob: input, type: "image/jpeg", quality: 0.92 }),
       uploadLimits.heicDecodeTimeoutMs,
-      "HEIC decoding took too long. Try fewer photos at once.",
+      "HEIC decoding took too long. Try fewer images at once.",
     );
     if (blob instanceof Blob && blob.size) return blob;
     primaryError = new Error("Empty HEIC decoder output");
@@ -700,7 +696,7 @@ async function convertHeic(file) {
     const result = await withTimeout(
       heic2any({ blob: input, toType: "image/jpeg", quality: 0.92 }),
       uploadLimits.heicDecodeTimeoutMs,
-      "HEIC decoding took too long. Try fewer photos at once.",
+      "HEIC decoding took too long. Try fewer images at once.",
     );
     const blob = Array.isArray(result) ? result[0] : result;
     if (blob instanceof Blob && blob.size) return blob;
@@ -708,7 +704,7 @@ async function convertHeic(file) {
   } catch (error) {
     console.error("HEIC decoding failed", primaryError, error);
     if (error instanceof UploadError && error.retryable) throw error;
-    throw new UploadError("HEIC photo could not be decoded. Try exporting it as JPEG.", { cause: error });
+    throw new UploadError("HEIC image could not be decoded. Try exporting it as JPEG.", { cause: error });
   }
 }
 
@@ -820,7 +816,7 @@ function loadImageSource(blob, label = "image") {
     };
     // iOS Safari occasionally never fires load/error for very large photos under memory pressure.
     const timer = window.setTimeout(
-      () => fail(new UploadError("opening the photo took too long. Try again or use a smaller image.", { retryable: true })),
+      () => fail(new UploadError("opening the image took too long. Try again or use a smaller file.", { retryable: true })),
       uploadLimits.imageLoadTimeoutMs,
     );
     img.decoding = "async";
@@ -1458,7 +1454,7 @@ async function processIncomingFiles(selectedFiles, { isRetry = false } = {}) {
         }
       } catch (error) {
         console.error("Photo upload failed", file.name, error);
-        failedFiles.push(`${file.name}: ${describeUploadError(error, "could not open photo")}`);
+        failedFiles.push(`${file.name}: ${describeUploadError(error, "could not open image")}`);
         if (isRetryableError(error)) retryableFiles.push(file);
       }
     }
@@ -1469,7 +1465,7 @@ async function processIncomingFiles(selectedFiles, { isRetry = false } = {}) {
   setFailedFiles(retryableFiles);
 
   if (!newTileIds.length) {
-    setStatus(`Could not add photos. ${failedFiles.slice(0, 2).join("; ") || "Choose supported image files."}`, true);
+    setStatus(`Could not add images. ${failedFiles.slice(0, 2).join("; ") || "Choose supported image files."}`, true);
     return;
   }
 
@@ -1486,14 +1482,14 @@ async function processIncomingFiles(selectedFiles, { isRetry = false } = {}) {
   const skippedCount = skippedByType + failedFiles.length;
   if (skippedCount) {
     setStatus(
-      `Added ${newTileIds.length} photo${newTileIds.length === 1 ? "" : "s"}. ${optimizationMessage}${skippedByType ? `${skippedByType} non-image file${skippedByType === 1 ? "" : "s"} skipped. ` : ""}${failedFiles.length ? `Could not open: ${failedFiles.slice(0, 2).join("; ")}${failedFiles.length > 2 ? `; ${failedFiles.length - 2} more` : ""}.` : ""}`,
+      `Added ${newTileIds.length} image${newTileIds.length === 1 ? "" : "s"}. ${optimizationMessage}${skippedByType ? `${skippedByType} non-image file${skippedByType === 1 ? "" : "s"} skipped. ` : ""}${failedFiles.length ? `Could not open: ${failedFiles.slice(0, 2).join("; ")}${failedFiles.length > 2 ? `; ${failedFiles.length - 2} more` : ""}.` : ""}`,
       failedFiles.length > 0,
     );
     return;
   }
 
   setStatus(
-    `Added ${newTileIds.length} photo${newTileIds.length === 1 ? "" : "s"}. ${optimizationMessage}`.trim(),
+    `Added ${newTileIds.length} image${newTileIds.length === 1 ? "" : "s"}. ${optimizationMessage}`.trim(),
     false,
   );
 }
@@ -1517,7 +1513,7 @@ function cycleGrid(direction = 1) {
   clampTilesToGrid();
   render();
   const { cols, rows } = getGrid();
-  setStatus(`Grid ${cols} × ${rows}.${state.tiles.length ? " Press update to reflow the layout." : ""}`, false);
+  setStatus(`Grid ${cols} × ${rows}.${state.tiles.length ? " Press arrange to apply." : ""}`, false);
 }
 
 function cycleToneMode() {
@@ -1533,7 +1529,7 @@ function setToneMode(mode) {
   state.pendingRefresh = true;
   saveSettings();
   render();
-  setStatus(`Tone grouping ${state.controls.tone}. Press update to reflow the layout.`, false);
+  setStatus(`Tone grouping ${state.controls.tone}. Press arrange to apply.`, false);
 }
 
 function refreshComposition() {
@@ -1548,7 +1544,7 @@ function refreshComposition() {
   if (!targetIds.length) {
     state.pendingRefresh = false;
     render();
-    setStatus("No unlocked photos are available to update.", true);
+    setStatus("All images are locked or pinned, so there is nothing to arrange.", true);
     return;
   }
 
@@ -1556,7 +1552,7 @@ function refreshComposition() {
   normalizeLayerOrder();
   state.pendingRefresh = false;
   render();
-  setStatus("Composition updated for the current grid and controls.", false);
+  setStatus("Arranged.", false);
 }
 
 function scatter() {
@@ -1614,6 +1610,7 @@ function mutate() {
   normalizeLayerOrder();
   state.pendingRefresh = false;
   render();
+  setStatus(`Nudged ${picked.length} image${picked.length === 1 ? "" : "s"}.`, false);
 }
 
 // ---- Layout -------------------------------------------------------------------------------
@@ -1947,7 +1944,7 @@ function resetControls() {
   render();
   setStatus(
     state.tiles.length
-      ? "Sliders reset to the middle. Press update to reflow the composition."
+      ? "Sliders reset to the middle. Press arrange to apply."
       : "Sliders reset to the middle.",
     false,
   );
@@ -1994,14 +1991,14 @@ function renderWorkspaceClasses() {
   );
   elements.loadingOverlay.setAttribute("aria-hidden", String(!state.upload.active));
   elements.loadingTitle.textContent = state.upload.active
-    ? `preparing photos ${Math.min(state.upload.processed + 1, state.upload.total)} / ${state.upload.total}`
-    : "preparing photos";
+    ? `preparing images ${Math.min(state.upload.processed + 1, state.upload.total)} / ${state.upload.total}`
+    : "preparing images";
   elements.loadingMeta.textContent = state.upload.active
     ? formatLoadingFileLabel(state.upload.currentFile)
     : "working…";
   elements.workspaceNote.textContent = state.cropMode
-    ? "Crop mode: drag inside the tile to reposition. Use the wheel to zoom. Press Esc to exit."
-    : "Drag photos onto the grid. Select a tile to pin it as anchor, or double-click it to crop.";
+    ? "Cropping: drag the image to reframe it. Scroll or press + − to zoom. Esc to finish."
+    : "Click an image to select it. Double-click to crop.";
 }
 
 function setStatus(message, isError = false) {
@@ -2019,11 +2016,9 @@ function renderMeta() {
   elements.canvasLabel.textContent = `${state.canvas.width} × ${state.canvas.height}`;
   elements.photoCount.textContent = String(state.tiles.length);
   elements.layerCount.textContent = String(state.tiles.length);
-  elements.compositionMode.textContent = state.anchorId ? "anchor" : "free";
   elements.anchorLabel.textContent = state.anchorId ? getTile(state.anchorId)?.label || "none" : "none";
-  elements.emptyState.hidden = state.tiles.length > 0;
   elements.dropOverlay.querySelector(".drop-meta").textContent = state.tiles.length
-    ? "drop more photos or click to browse"
+    ? "drop more images or click to browse"
     : "or click to browse";
 
   const actionsDisabled = state.upload.active || state.tiles.length === 0;
@@ -2035,15 +2030,14 @@ function renderMeta() {
   elements.applyCanvasSizeButton.disabled = state.upload.active;
   elements.dropOverlay.setAttribute("aria-disabled", String(state.upload.active));
   elements.updateButton.disabled = actionsDisabled;
-  elements.scatterButton.disabled = actionsDisabled;
   elements.mutateButton.disabled = actionsDisabled;
   elements.exportButton.disabled = actionsDisabled;
   elements.clearButton.disabled = actionsDisabled;
   if (elements.retryButton) {
     elements.retryButton.hidden = state.upload.active || state.failedFiles.length === 0;
-    elements.retryButton.textContent = `retry ${state.failedFiles.length} failed`;
+    elements.retryButton.textContent = `retry ${state.failedFiles.length} image${state.failedFiles.length === 1 ? "" : "s"}`;
   }
-  elements.updateButton.textContent = "update";
+  elements.updateButton.textContent = "arrange";
   renderNextStep();
 }
 
@@ -2128,7 +2122,7 @@ function renderLayerStripContent() {
 
     const level = document.createElement("span");
     level.className = "layer-level";
-    level.textContent = index === 0 ? "top" : `z ${tile.zIndex}`;
+    level.textContent = index === 0 ? "top" : String(index + 1);
 
     titleRow.append(title, level);
 
@@ -2402,8 +2396,8 @@ function renderInspectorContent() {
 
   if (!tile) {
     elements.inspector.innerHTML = `
-      <p class="empty-note">select a tile</p>
-      <p class="empty-note inspector-note">Move, resize, crop, replace, lock, or pin one image as anchor. Anchor keeps that photo fixed while update or scatter arranges the rest around it.</p>
+      <p class="empty-note">select an image</p>
+      <p class="empty-note inspector-note">Click an image to move, resize, crop, replace, lock or pin it as anchor. An anchor stays in place while the rest is arranged around it.</p>
     `;
     return;
   }
@@ -2411,20 +2405,15 @@ function renderInspectorContent() {
   const cropAction = state.cropMode ? "done" : "crop";
   const anchorAction = tile.isAnchor ? "release anchor" : "pin anchor";
   const lockAction = tile.locked ? "unlock" : "lock";
-  const roleLabel = tile.isAnchor ? "anchored tile" : "free tile";
   const anchorCopy = tile.isAnchor
-    ? "This tile stays fixed when you press update or scatter."
-    : "Pin this tile as anchor to keep it fixed while the rest rearranges around it.";
+    ? "This image stays in place when you press arrange."
+    : "Pin as anchor to keep this image in place while the rest is arranged around it.";
 
   elements.inspector.innerHTML = `
     <div class="inspector-state">
       <div class="inspector-title">
         <span>selected</span>
         <span>${tile.label}</span>
-      </div>
-      <div class="inspector-row">
-        <span>role</span>
-        <span>${roleLabel}</span>
       </div>
       <div class="inspector-row">
         <span>size</span>
@@ -2445,8 +2434,8 @@ function renderInspectorContent() {
     <p class="empty-note inspector-note">${anchorCopy}</p>
     <p class="empty-note inspector-note">${
       state.cropMode
-        ? "Keys: arrows pan the photo, + and − zoom, Esc finishes."
-        : "Keys: arrows move, Shift + arrows resize, [ and ] change depth. Or drag cards in the layers panel."
+        ? "Keys: arrows pan the image, + and − zoom, Esc finishes."
+        : "Keys: arrows move, Shift + arrows resize, [ and ] move a layer down or up. Or drag images in the layers list."
     }</p>
   `;
 
@@ -2492,7 +2481,7 @@ function runInspectorAction(action) {
     if (tile.isAnchor) {
       tile.isAnchor = false;
       state.anchorId = null;
-      setStatus(`${tile.label} released. Scatter and update will move it normally again.`, false);
+      setStatus(`${tile.label} released. Arrange will move it again.`, false);
     } else {
       state.tiles.forEach((item) => {
         item.isAnchor = false;
@@ -2500,7 +2489,7 @@ function runInspectorAction(action) {
       tile.isAnchor = true;
       state.anchorId = tile.id;
       setStatus(
-        `${tile.label} pinned as anchor. Update and scatter will keep it in place and arrange other photos around it.`,
+        `${tile.label} pinned as anchor. Arrange keeps it in place and places the other images around it.`,
         false,
       );
     }
@@ -2532,7 +2521,7 @@ function releaseUnusedAsset(assetId) {
 }
 
 function updateUploadLabel() {
-  elements.uploadButton.textContent = state.tiles.length ? "add photos" : "add photos";
+  elements.uploadButton.textContent = "add images";
 }
 
 function clearComposition() {
@@ -2583,7 +2572,7 @@ function beginUploadProgress(total) {
   state.upload.processed = 0;
   state.upload.currentFile = "";
   render();
-  setStatus(`Preparing ${total} photo${total === 1 ? "" : "s"}…`, false);
+  setStatus(`Preparing ${total} image${total === 1 ? "" : "s"}…`, false);
 }
 
 function updateUploadProgress(index, total, fileName) {

@@ -218,7 +218,6 @@ async function main() {
     const buttons = [
       "#uploadButton",
       "#updateButton",
-      "#scatterButton",
       "#mutateButton",
       "#exportButton",
       "#clearButton",
@@ -233,12 +232,11 @@ async function main() {
 
     await assertButtonsShareSingleRow(
       page,
-      ["#uploadButton", "#updateButton", "#scatterButton", "#mutateButton", "#exportButton", "#clearButton"],
+      ["#uploadButton", "#updateButton", "#mutateButton", "#exportButton", "#clearButton"],
       "Desktop action row wrapped unexpectedly",
     );
 
     assert(await page.locator("#updateButton").isDisabled(), "Update should start disabled");
-    assert(await page.locator("#scatterButton").isDisabled(), "Scatter should start disabled");
     assert(await page.locator("#mutateButton").isDisabled(), "Mutate should start disabled");
     assert(await page.locator("#exportButton").isDisabled(), "Export should start disabled");
     assert(await page.locator("#clearButton").isDisabled(), "Clear all should start disabled");
@@ -263,7 +261,7 @@ async function main() {
       () => document.getElementById("photoCount")?.textContent?.trim() === "2",
     );
 
-    assert(!(await page.locator("#scatterButton").isDisabled()), "Scatter should enable after upload");
+    assert(!(await page.locator("#updateButton").isDisabled()), "Arrange should enable after upload");
     assert(!(await page.locator("#clearButton").isDisabled()), "Clear all should enable after upload");
     assert((await page.locator(".layer-card").count()) === 2, "Layer strip should list uploaded photos");
 
@@ -352,7 +350,7 @@ async function main() {
 
     await page.dblclick(".tile", { position: { x: 14, y: 14 } });
     await page.waitForFunction(
-      () => /Crop mode:/i.test(document.getElementById("workspaceNote")?.textContent || ""),
+      () => /Cropping:/i.test(document.getElementById("workspaceNote")?.textContent || ""),
     );
     await page.waitForFunction(() => {
       const inspector = document.getElementById("inspector")?.textContent || "";
@@ -402,7 +400,7 @@ async function main() {
     );
     await page.keyboard.press("Escape");
     await page.waitForFunction(
-      () => !/Crop mode:/i.test(document.getElementById("workspaceNote")?.textContent || ""),
+      () => !/Cropping:/i.test(document.getElementById("workspaceNote")?.textContent || ""),
     );
 
     await page.click('[data-action="anchor"]');
@@ -423,7 +421,7 @@ async function main() {
     });
     await page.click("#updateButton");
     await page.waitForFunction(
-      () => /Composition updated/i.test(document.getElementById("statusNote")?.textContent || ""),
+      () => /Arranged/i.test(document.getElementById("statusNote")?.textContent || ""),
     );
     const anchorAfter = await page.evaluate(() => {
       const tile = state.tiles.find((item) => item.isAnchor);
@@ -512,7 +510,7 @@ async function main() {
     await mobilePage.goto(url, { waitUntil: "domcontentloaded" });
     await assertButtonsShareSingleRow(
       mobilePage,
-      ["#uploadButton", "#updateButton", "#scatterButton", "#mutateButton", "#exportButton", "#clearButton"],
+      ["#uploadButton", "#updateButton", "#mutateButton", "#exportButton", "#clearButton"],
       "Mobile action row wrapped unexpectedly",
     );
     await assertFileChooserOpens(

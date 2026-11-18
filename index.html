@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Intersection Map is a browser-based composition field for arranging photographs into experimental editorial layouts."
+      content="Intersection Map is a browser-based composition field for arranging images into experimental editorial layouts."
     />
     <meta name="theme-color" content="#fafafa" />
     <meta name="application-version" content="1.0.3" />
@@ -27,12 +27,8 @@
 
         <div class="rail-block meta">
           <div class="meta-row">
-            <span>photos</span>
+            <span>images</span>
             <span id="photoCount">0</span>
-          </div>
-          <div class="meta-row">
-            <span>composition</span>
-            <span id="compositionMode">free</span>
           </div>
           <div class="meta-row">
             <span>anchor</span>
@@ -87,7 +83,7 @@
         </div>
 
         <div class="rail-block inspector" id="inspector">
-          <p class="empty-note">select a tile</p>
+          <p class="empty-note">select an image</p>
         </div>
       </aside>
 
@@ -95,14 +91,13 @@
         <div class="stage-header">
           <div class="stage-heading">
             <h2 class="stage-kicker">workspace</h2>
-            <p class="stage-subtitle">drop photographs directly onto the field or add them manually</p>
+            <p class="stage-subtitle">arrange images into a composition</p>
           </div>
           <div class="stage-actions">
-            <label class="text-action cta upload-trigger" id="uploadButton" for="fileInput" role="button" tabindex="0">add photos</label>
-            <button class="text-action" id="updateButton" type="button">update</button>
-            <button class="text-action" id="scatterButton" type="button">scatter</button>
-            <button class="text-action" id="mutateButton" type="button">mutate</button>
-            <button class="text-action" id="exportButton" type="button">export</button>
+            <label class="text-action cta upload-trigger" id="uploadButton" for="fileInput" role="button" tabindex="0">add images</label>
+            <button class="text-action" id="updateButton" type="button">arrange</button>
+            <button class="text-action" id="mutateButton" type="button">nudge</button>
+            <button class="text-action" id="exportButton" type="button">export png</button>
             <button class="text-action is-destructive" id="clearButton" type="button">clear all</button>
           </div>
         </div>
@@ -115,16 +110,12 @@
           <div class="workspace-frame">
             <div class="workspace" id="workspace">
               <label class="drop-overlay" id="dropOverlay" for="fileInput" role="button" tabindex="0">
-                <span class="drop-title">drop photos here</span>
+                <span class="drop-title">drop images here</span>
                 <span class="drop-meta">or click to browse</span>
               </label>
               <div class="loading-overlay" id="loadingOverlay" aria-live="polite" aria-hidden="true">
-                <p class="loading-title" id="loadingTitle">preparing photos</p>
+                <p class="loading-title" id="loadingTitle">preparing images</p>
                 <p class="loading-meta" id="loadingMeta">working…</p>
-              </div>
-              <div class="empty-state" id="emptyState">
-                <p>Drop 10–30 photographs straight onto the grid.</p>
-                <p>Scatter builds an irregular composition from unlocked tiles.</p>
               </div>
             </div>
           </div>
@@ -133,13 +124,13 @@
                 <h2 class="stage-kicker">layers</h2>
                 <p class="layers-count" id="layerCount">0</p>
               </div>
-            <p class="layers-note">Drag cards here to reorder depth. Click a card to select the photo.</p>
+            <p class="layers-note">Drag to change which image is on top. Click to select.</p>
             <div class="layers-list" id="layerList" aria-live="polite"></div>
-            <p class="empty-note layers-empty" id="layerEmpty">Hidden and overlapping photos will appear here.</p>
+            <p class="empty-note layers-empty" id="layerEmpty">Images you add will be listed here.</p>
           </aside>
         </div>
         <div class="stage-footnote" id="workspaceNote">
-          Double-click a selected tile to enter crop mode.
+          Click an image to select it. Double-click to crop.
         </div>
       </main>
 
