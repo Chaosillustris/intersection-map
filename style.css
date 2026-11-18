@@ -685,10 +685,16 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .tile img {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  max-width: none;
+  max-height: none;
   pointer-events: none;
+  -webkit-user-drag: none;
 }
 
 .selection-overlay {
@@ -722,6 +728,11 @@ input[type="range"]::-moz-range-thumb {
 
 .tile-crop-note {
   bottom: 0.28rem;
+}
+
+.tile-badge[hidden],
+.tile-crop-note[hidden] {
+  display: none;
 }
 
 .tile-handle,

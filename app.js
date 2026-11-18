@@ -1037,6 +1037,7 @@ function handleWorkspaceDoubleClick(event) {
   setSelectedTile(tile.id);
   ensureCropFreedom(tile);
   state.cropMode = true;
+  renderTilesOnly();
   renderWorkspaceClasses();
   renderInspector();
 }
@@ -1224,6 +1225,7 @@ function handleCropWheel(event) {
 function handleKeydown(event) {
   if (event.key === "Escape") {
     state.cropMode = false;
+    renderTilesOnly();
     clearDropTarget();
     renderWorkspaceClasses();
     renderInspector();
@@ -2013,10 +2015,19 @@ function renderTile(tile, metrics = getMetrics()) {
   tileEl.classList.toggle("is-crop", state.cropMode && tile.id === state.selectedId);
 
   const img = tileEl.querySelector("img");
-  img.src = asset.url;
+  if (img.getAttribute("src") !== asset.url) {
+    img.src = asset.url;
+  }
   img.alt = asset.name;
-  img.style.objectPosition = `${tile.cropX * 100}% ${tile.cropY * 100}%`;
-  img.style.transform = `scale(${tile.cropScale})`;
+  // Position the photo in pixels with the same math as drawTileToCanvas, so cropX/cropY pan
+  // along both axes (including the extra room cropScale adds) and the screen matches export.
+  const tileWidthPx = tile.width * metrics.colPx;
+  const tileHeightPx = tile.height * metrics.rowPx;
+  const cover = getCoverFrame(asset, tileWidthPx, tileHeightPx, tile.cropScale);
+  img.style.width = `${cover.drawWidth}px`;
+  img.style.height = `${cover.drawHeight}px`;
+  img.style.left = `${-(cover.drawWidth - tileWidthPx) * tile.cropX}px`;
+  img.style.top = `${-(cover.drawHeight - tileHeightPx) * tile.cropY}px`;
 
   const badge = tileEl.querySelector(".tile-badge");
   const badgeParts = [];
@@ -2158,6 +2169,7 @@ function runInspectorAction(action) {
       ensureCropFreedom(tile);
     }
     state.cropMode = !state.cropMode;
+    renderTilesOnly();
     renderWorkspaceClasses();
     renderInspector();
     return;

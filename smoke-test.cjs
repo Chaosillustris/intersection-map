@@ -326,17 +326,34 @@ async function main() {
       const match = inspector.match(/crop\s+(\d+)%/i);
       return match ? Number(match[1]) > 100 : false;
     });
-    const cropPositionBefore = await selectedTile.locator("img").evaluate((node) => node.style.objectPosition);
+    // Compare where the photo actually sits inside the tile, not just the stored crop values.
+    const readImageOffset = (node) => {
+      const tileRect = node.parentElement.getBoundingClientRect();
+      const imageRect = node.getBoundingClientRect();
+      return `${Math.round(imageRect.left - tileRect.left)} ${Math.round(imageRect.top - tileRect.top)}`;
+    };
     const cropBox = await selectedTile.boundingBox();
     assert(cropBox, "Could not read crop box");
-    await page.mouse.move(cropBox.x + cropBox.width / 2, cropBox.y + cropBox.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(cropBox.x + cropBox.width / 2, cropBox.y + cropBox.height / 2 + 24, {
-      steps: 8,
-    });
-    await page.mouse.up();
-    const cropPositionAfter = await selectedTile.locator("img").evaluate((node) => node.style.objectPosition);
-    assert(cropPositionAfter !== cropPositionBefore, "Crop drag did not update image position");
+    const dragCrop = async (dx, dy) => {
+      await page.mouse.move(cropBox.x + cropBox.width / 2, cropBox.y + cropBox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(cropBox.x + cropBox.width / 2 + dx, cropBox.y + cropBox.height / 2 + dy, {
+        steps: 8,
+      });
+      await page.mouse.up();
+    };
+    // Two drags in opposite directions: the photo itself must move on both axes, not just the
+    // stored crop values (which used to change while the picture stayed put).
+    await dragCrop(-12, -12);
+    const cropPositionBefore = await selectedTile.locator("img").evaluate(readImageOffset);
+    await dragCrop(12, 12);
+    const cropPositionAfter = await selectedTile.locator("img").evaluate(readImageOffset);
+    const [beforeX, beforeY] = cropPositionBefore.split(" ").map(Number);
+    const [afterX, afterY] = cropPositionAfter.split(" ").map(Number);
+    assert(
+      afterX !== beforeX && afterY !== beforeY,
+      `Crop drag did not move the photo on both axes (${cropPositionBefore} -> ${cropPositionAfter})`,
+    );
     await page.mouse.wheel(0, -240);
     await page.waitForFunction(
       () => /%/.test(document.getElementById("inspector")?.textContent || ""),
