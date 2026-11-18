@@ -2475,7 +2475,7 @@ function getExportBackgroundColor() {
   const value = getComputedStyle(document.documentElement)
     .getPropertyValue("--paper-alt")
     .trim();
-  return value || "#edf0f2";
+  return value || "#f0f0f0";
 }
 
 function randomInt(min, max) {

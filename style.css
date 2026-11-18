@@ -2,7 +2,7 @@
   --bg: #eaedf0;
   --panel: #f5f6f7;
   --paper: #f3f5f6;
-  --paper-alt: #edf0f2;
+  --paper-alt: #f0f0f0;
   --paper-shadow: rgba(53, 66, 79, 0.07);
   --text: #1b2228;
   --muted: rgba(27, 34, 40, 0.5);
@@ -404,8 +404,8 @@ input[type="range"]::-moz-range-thumb {
   background-color: var(--paper-alt);
   border: 1px solid var(--line);
   background-image:
-    linear-gradient(to right, transparent 0, transparent calc(100% - 1px), rgba(84, 96, 109, 0.035) 100%),
-    linear-gradient(to bottom, transparent 0, transparent calc(100% - 1px), rgba(84, 96, 109, 0.035) 100%);
+    linear-gradient(to right, transparent 0, transparent calc(100% - 1px), rgba(96, 96, 96, 0.035) 100%),
+    linear-gradient(to bottom, transparent 0, transparent calc(100% - 1px), rgba(96, 96, 96, 0.035) 100%);
   background-size: calc(100% / 12) calc(100% / 9), calc(100% / 12) calc(100% / 9);
   box-shadow: 0 8px 24px var(--paper-shadow);
 }
