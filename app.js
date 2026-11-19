@@ -41,6 +41,11 @@ const gridPresets = [
 // (density is shown as "size": it scales the tiles.)
 const defaultControls = { density: 50, overlap: 50, variation: 50, air: 50 };
 
+// Undo/redo steps (see recordHistory) and every image URL created, so unused ones can be revoked.
+const historyLimit = 40;
+const undoHistory = { undo: [], redo: [], mergeKey: null, mergedAt: 0 };
+const knownAssets = new Map();
+
 // Set only while a layout runs on the classic preset grid.
 let layoutGridOverride = null;
 // Candidate layouts per update/scatter; the one closest to the "air" target wins.
@@ -82,6 +87,8 @@ const elements = {
   appBuildLabel: document.getElementById("appBuildLabel"),
   fileInput: document.getElementById("fileInput"),
   retryButton: document.getElementById("retryButton"),
+  undoButton: document.getElementById("undoButton"),
+  redoButton: document.getElementById("redoButton"),
   replaceInput: document.getElementById("replaceInput"),
 };
 
@@ -139,6 +146,8 @@ function bindEvents() {
   elements.fileInput.addEventListener("change", handleUpload);
   elements.replaceInput.addEventListener("change", handleReplace);
   elements.retryButton?.addEventListener("click", retryFailedFiles);
+  elements.undoButton.addEventListener("click", undo);
+  elements.redoButton.addEventListener("click", redo);
   elements.updateButton.addEventListener("click", refreshComposition);
   elements.mutateButton.addEventListener("click", () => mutate());
   elements.exportButton.addEventListener("click", () => exportComposition());
@@ -298,6 +307,9 @@ function applyCanvasSize() {
   const changed =
     nextSize.width !== state.canvas.width || nextSize.height !== state.canvas.height;
 
+  if (changed) {
+    recordHistory("field size");
+  }
   state.canvas = nextSize;
   clampTilesToGrid();
   syncCanvasInputs();
@@ -369,6 +381,8 @@ async function handleReplace(event) {
       if (!(await looksLikeImageFileAsync(file))) throw new Error("Choose an image file to use instead.");
       const asset = await createAsset(file);
       const previousAssetId = tile.assetId;
+      recordHistory("replace");
+      registerAsset(asset);
       state.assets.push(asset);
       tile.assetId = asset.id;
       releaseUnusedAsset(previousAssetId);
@@ -1112,6 +1126,7 @@ function beginDrag(tile, event) {
     colPx,
     rowPx,
     hasMoved: false,
+    before: captureComposition("move"),
   };
 }
 
@@ -1127,12 +1142,15 @@ function beginResize(tile, axis, event) {
     startHeight: tile.height,
     colPx,
     rowPx,
+    before: captureComposition("resize"),
   };
 }
 
 function beginCropDrag(tile, event) {
+  const before = captureComposition("crop");
   ensureCropFreedom(tile);
   state.interaction = {
+    before,
     type: "crop",
     tileId: tile.id,
     startPointerX: event.clientX,
@@ -1210,7 +1228,19 @@ function handlePointerMove(event) {
 }
 
 function endInteraction() {
+  const interaction = state.interaction;
   state.interaction = null;
+  if (!interaction?.before) {
+    return;
+  }
+  const before = interaction.before.tiles.find((tile) => tile.id === interaction.tileId);
+  const now = getTile(interaction.tileId);
+  const changed =
+    before && now && ["x", "y", "width", "height", "cropX", "cropY", "cropScale"].some((key) => before[key] !== now[key]);
+  if (changed) {
+    undoHistory.mergeKey = null;
+    pushHistorySnapshot(interaction.before);
+  }
 }
 
 function updateCropDrag(tile, event) {
@@ -1251,11 +1281,22 @@ function handleCropWheel(event) {
 
   event.preventDefault();
   const delta = event.deltaY < 0 ? 0.05 : -0.05;
+  recordHistory("crop", `crop-${tile.id}`);
   tile.cropScale = clamp(1, round(tile.cropScale + delta, 2), 2.6);
   renderTilesOnly();
 }
 
 function handleKeydown(event) {
+  if ((event.metaKey || event.ctrlKey) && !isTypingTarget(event.target)) {
+    const redoKey = (event.code === "KeyZ" && event.shiftKey) || (event.ctrlKey && event.code === "KeyY");
+    if (event.code === "KeyZ" || redoKey) {
+      event.preventDefault();
+      if (redoKey) redo();
+      else undo();
+      return;
+    }
+  }
+
   if (event.key === "Escape") {
     state.cropMode = false;
     renderTilesOnly();
@@ -1310,6 +1351,7 @@ function handleTileKeys(event) {
   const zoomOut = event.code === "Minus" || event.code === "NumpadSubtract" || event.key === "-";
   if (state.cropMode && (zoomIn || zoomOut)) {
     const delta = zoomOut ? -0.05 : 0.05;
+    recordHistory("crop", `crop-${tile.id}`);
     tile.cropScale = clamp(1, round(tile.cropScale + delta, 2), 2.6);
     renderTilesOnly();
     renderInspector();
@@ -1323,6 +1365,7 @@ function handleTileKeys(event) {
   const [dx, dy] = delta;
 
   if (state.cropMode) {
+    recordHistory("crop", `crop-${tile.id}`);
     tile.cropX = clamp(0, round(tile.cropX + dx * 0.05, 3), 1);
     tile.cropY = clamp(0, round(tile.cropY + dy * 0.05, 3), 1);
     renderTile(tile);
@@ -1336,6 +1379,7 @@ function handleTileKeys(event) {
   }
 
   const { cols, rows } = getGrid();
+  recordHistory(event.shiftKey ? "resize" : "move", `${event.shiftKey ? "resize" : "move"}-${tile.id}`);
   if (event.shiftKey) {
     tile.width = clamp(1, tile.width + dx, cols);
     tile.height = clamp(1, tile.height + dy, rows);
@@ -1366,6 +1410,7 @@ function moveTileDepth(tile, direction) {
     setStatus(`${tile.label} is already ${direction > 0 ? "on top" : "at the bottom"}.`, false);
     return;
   }
+  recordHistory("layer order", `depth-${tile.id}`);
   [tile.zIndex, neighbour.zIndex] = [neighbour.zIndex, tile.zIndex];
   render();
   setStatus(`Layer order updated. ${tile.label} moved ${direction > 0 ? "up" : "down"}.`, false);
@@ -1435,6 +1480,7 @@ async function processIncomingFiles(selectedFiles, { isRetry = false } = {}) {
   const failedFiles = [];
   const retryableFiles = [];
   const optimizedAssets = [];
+  let recordedUpload = false;
 
   if (!isRetry) setFailedFiles([]);
   beginUploadProgress(files.length);
@@ -1445,6 +1491,11 @@ async function processIncomingFiles(selectedFiles, { isRetry = false } = {}) {
       await nextFrame();
       try {
         const asset = await createAsset(file);
+        if (!recordedUpload) {
+          recordHistory("add images");
+          recordedUpload = true;
+        }
+        registerAsset(asset);
         state.assets.push(asset);
         const tile = createTile(asset.id);
         state.tiles.push(tile);
@@ -1507,6 +1558,7 @@ async function retryFailedFiles() {
 }
 
 function cycleGrid(direction = 1) {
+  recordHistory("grid", "grid");
   state.gridIndex = (state.gridIndex + direction + gridPresets.length) % gridPresets.length;
   state.pendingRefresh = true;
   saveSettings();
@@ -1548,6 +1600,8 @@ function refreshComposition() {
     return;
   }
 
+  recordHistory("arrange");
+
   layoutTiles(targetIds);
   normalizeLayerOrder();
   state.pendingRefresh = false;
@@ -1575,6 +1629,8 @@ function mutate() {
   if (!candidates.length) {
     return;
   }
+
+  recordHistory("nudge");
 
   const { cols, rows } = getGrid();
   const overlap = state.controls.overlap / 100;
@@ -2037,6 +2093,7 @@ function renderMeta() {
     elements.retryButton.hidden = state.upload.active || state.failedFiles.length === 0;
     elements.retryButton.textContent = `retry ${state.failedFiles.length} image${state.failedFiles.length === 1 ? "" : "s"}`;
   }
+  renderHistoryButtons();
   elements.updateButton.textContent = "arrange";
   renderNextStep();
 }
@@ -2193,6 +2250,7 @@ function handleLayerDrop(tileId, event) {
     setSelectedTile(sourceId);
     return;
   }
+  recordHistory("layer order");
   reorderLayerStack(sourceId, tileId, placement);
   setSelectedTile(sourceId);
   setStatus(`Layer order updated. ${getTile(sourceId)?.label || "Selected image"} moved in the stack.`, false);
@@ -2469,6 +2527,7 @@ function runInspectorAction(action) {
   }
 
   if (action === "lock") {
+    recordHistory(tile.locked ? "unlock" : "lock");
     tile.locked = !tile.locked;
     if (tile.locked) {
       state.cropMode = false;
@@ -2478,6 +2537,7 @@ function runInspectorAction(action) {
   }
 
   if (action === "anchor") {
+    recordHistory(tile.isAnchor ? "release anchor" : "pin anchor");
     if (tile.isAnchor) {
       tile.isAnchor = false;
       state.anchorId = null;
@@ -2498,6 +2558,7 @@ function runInspectorAction(action) {
   }
 
   if (action === "delete") {
+    recordHistory("delete");
     state.tiles = state.tiles.filter((item) => item.id !== tile.id);
     releaseUnusedAsset(tile.assetId);
     if (state.anchorId === tile.id) {
@@ -2513,11 +2574,110 @@ function runInspectorAction(action) {
   }
 }
 
+// ---- Undo / redo ---------------------------------------------------------------------------
+// Every action that changes the composition first records a snapshot of it. Images that only
+// history still refers to are kept alive (not revoked) so undo can bring them back.
+
+function captureComposition(label) {
+  return {
+    label,
+    tiles: state.tiles.map((tile) => ({ ...tile })),
+    assets: state.assets.slice(),
+    anchorId: state.anchorId,
+    selectedId: state.selectedId,
+    gridIndex: state.gridIndex,
+    canvas: { ...state.canvas },
+  };
+}
+
+// mergeKey: consecutive records with the same key within a second count as one step
+// (holding an arrow key, scrolling to zoom).
+function recordHistory(label, mergeKey = null) {
+  const now = performance.now();
+  if (mergeKey && undoHistory.mergeKey === mergeKey && now - undoHistory.mergedAt < 1000) {
+    undoHistory.mergedAt = now;
+    return;
+  }
+  undoHistory.mergeKey = mergeKey;
+  undoHistory.mergedAt = now;
+  pushHistorySnapshot(captureComposition(label));
+}
+
+function pushHistorySnapshot(snapshot) {
+  undoHistory.undo.push(snapshot);
+  if (undoHistory.undo.length > historyLimit) {
+    undoHistory.undo.shift();
+  }
+  undoHistory.redo = [];
+  pruneAssets();
+  renderHistoryButtons();
+}
+
+function applyComposition(snapshot) {
+  state.tiles = snapshot.tiles.map((tile) => ({ ...tile }));
+  state.assets = snapshot.assets.slice();
+  state.anchorId = snapshot.anchorId;
+  state.selectedId = state.tiles.some((tile) => tile.id === snapshot.selectedId) ? snapshot.selectedId : null;
+  state.gridIndex = snapshot.gridIndex;
+  state.canvas = { ...snapshot.canvas };
+  state.cropMode = false;
+  state.interaction = null;
+  undoHistory.mergeKey = null;
+  syncCanvasInputs();
+  saveSettings();
+  updateUploadLabel();
+  render();
+}
+
+function undo() {
+  if (state.upload.active || !undoHistory.undo.length) return;
+  const snapshot = undoHistory.undo.pop();
+  undoHistory.redo.push(captureComposition(snapshot.label));
+  applyComposition(snapshot);
+  renderHistoryButtons();
+  setStatus(`Undid ${snapshot.label}.`, false);
+}
+
+function redo() {
+  if (state.upload.active || !undoHistory.redo.length) return;
+  const snapshot = undoHistory.redo.pop();
+  undoHistory.undo.push(captureComposition(snapshot.label));
+  applyComposition(snapshot);
+  renderHistoryButtons();
+  setStatus(`Redid ${snapshot.label}.`, false);
+}
+
+function renderHistoryButtons() {
+  const lastUndo = undoHistory.undo[undoHistory.undo.length - 1];
+  const lastRedo = undoHistory.redo[undoHistory.redo.length - 1];
+  elements.undoButton.hidden = state.upload.active || !lastUndo;
+  elements.redoButton.hidden = state.upload.active || !lastRedo;
+  elements.undoButton.title = lastUndo ? `Undo ${lastUndo.label} (⌘Z / Ctrl+Z)` : "";
+  elements.redoButton.title = lastRedo ? `Redo ${lastRedo.label} (⇧⌘Z / Ctrl+Y)` : "";
+}
+
+function registerAsset(asset) {
+  knownAssets.set(asset.id, asset);
+}
+
+// Revoke image URLs that neither the composition nor any undo/redo step uses any more.
+function pruneAssets() {
+  const inUse = new Set(state.assets.map((asset) => asset.id));
+  for (const snapshot of [...undoHistory.undo, ...undoHistory.redo]) {
+    snapshot.assets.forEach((asset) => inUse.add(asset.id));
+  }
+  for (const [id, asset] of knownAssets) {
+    if (!inUse.has(id)) {
+      URL.revokeObjectURL(asset.url);
+      knownAssets.delete(id);
+    }
+  }
+}
+
 function releaseUnusedAsset(assetId) {
   if (state.tiles.some((tile) => tile.assetId === assetId)) return;
-  const asset = getAsset(assetId);
-  if (asset) URL.revokeObjectURL(asset.url);
   state.assets = state.assets.filter((item) => item.id !== assetId);
+  pruneAssets();
 }
 
 function updateUploadLabel() {
@@ -2529,9 +2689,7 @@ function clearComposition() {
     return;
   }
 
-  state.assets.forEach((asset) => {
-    URL.revokeObjectURL(asset.url);
-  });
+  recordHistory("clear all");
   state.assets = [];
   state.tiles = [];
   state.selectedId = null;
@@ -2541,9 +2699,10 @@ function clearComposition() {
   state.pendingRefresh = false;
   state.interaction = null;
   state.failedFiles = [];
+  pruneAssets();
   updateUploadLabel();
   render();
-  setStatus("Workspace cleared. Field size and controls were kept.", false);
+  setStatus("Cleared. Undo brings everything back.", false);
 }
 
 function containsImageFiles(dataTransfer) {

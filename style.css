@@ -368,8 +368,16 @@ button:focus-visible {
   min-height: 24px;
 }
 
-.retry-action[hidden] {
+.retry-action[hidden],
+.history-action[hidden] {
   display: none;
+}
+
+.stage-status-row .history-action {
+  min-height: 24px;
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
 }
 
 /* ---------- Inputs ---------- */
@@ -1043,5 +1051,92 @@ input[type="range"]::-moz-range-thumb {
     flex-wrap: wrap;
     row-gap: var(--s-1);
     overflow-x: visible;
+  }
+}
+
+/* ---------- Touch screens ----------
+   Fingers need bigger targets than a mouse: every control gets a hit area of at least 40px
+   (44px for the main actions), slider thumbs and tile resize handles grow too. */
+@media (pointer: coarse) {
+  .stage-actions .text-action,
+  .text-action.cta {
+    min-height: 44px;
+  }
+
+  .inspector-actions .text-action,
+  .controls-reset,
+  #applyCanvasSizeButton,
+  .stage-status-row .retry-action:not([hidden]),
+  .stage-status-row .history-action:not([hidden]) {
+    display: flex;
+    align-items: center;
+    min-height: 40px;
+  }
+
+  .inspector-actions .text-action + .text-action {
+    margin-top: 0;
+  }
+
+  .action-row {
+    min-height: 40px;
+  }
+
+  .control-row + .control-row {
+    margin-top: 0;
+  }
+
+  input[type="number"] {
+    min-height: 40px;
+  }
+
+  input[type="range"] {
+    height: 40px;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    width: 20px;
+    height: 20px;
+    margin-top: -9.5px;
+    border: 1.5px solid var(--accent);
+    border-radius: var(--radius);
+    background: var(--bg);
+  }
+
+  input[type="range"]::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border: 1.5px solid var(--accent);
+    border-radius: var(--radius);
+    background: var(--bg);
+  }
+
+  .tile-handle[data-handle="x"] {
+    right: -14px;
+    width: 28px;
+  }
+
+  .tile-handle[data-handle="x"]::after {
+    right: 13px;
+  }
+
+  .tile-handle[data-handle="y"] {
+    bottom: -14px;
+    height: 28px;
+  }
+
+  .tile-handle[data-handle="y"]::after {
+    bottom: 13px;
+  }
+
+  .tile-handle[data-handle="xy"] {
+    right: -16px;
+    bottom: -16px;
+    width: 32px;
+    height: 32px;
+  }
+
+  .tile-handle[data-handle="xy"]::after {
+    right: 12px;
+    bottom: 12px;
   }
 }

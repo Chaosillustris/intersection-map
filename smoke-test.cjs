@@ -429,6 +429,16 @@ async function main() {
     });
     assert(anchorAfter === anchorBefore, `Anchor moved on update (${anchorBefore} -> ${anchorAfter})`);
 
+    // Undo / redo of arrange with the keyboard.
+    const layoutSignature = () =>
+      page.evaluate(() => JSON.stringify(state.tiles.map((tile) => [tile.id, tile.x, tile.y, tile.width, tile.height])));
+    const arrangedLayout = await layoutSignature();
+    await page.keyboard.press("Control+KeyZ");
+    await page.waitForFunction(() => /Undid arrange/i.test(document.getElementById("statusNote")?.textContent || ""));
+    await page.keyboard.press("Control+Shift+KeyZ");
+    await page.waitForFunction(() => /Redid arrange/i.test(document.getElementById("statusNote")?.textContent || ""));
+    assert((await layoutSignature()) === arrangedLayout, "Redo did not restore the arranged layout");
+
     await page.click('[data-action="replace"]');
     await page.locator("#replaceInput").setInputFiles(imageB);
     await page.waitForFunction(
@@ -505,6 +515,19 @@ async function main() {
       () => document.getElementById("photoCount")?.textContent?.trim() === "0",
     );
     assert(await page.locator("#clearButton").isDisabled(), "Clear all should disable after clearing");
+
+    // Clear all can be undone from the status line, and the images still load afterwards.
+    assert(await page.locator("#undoButton").isVisible(), "Undo should be offered after clear all");
+    await page.click("#undoButton");
+    await page.waitForFunction(() => Number(document.getElementById("photoCount")?.textContent) > 0);
+    assert(
+      await page.evaluate(() =>
+        [...document.querySelectorAll(".tile img")].every((img) => img.complete && img.naturalWidth > 0),
+      ),
+      "Images did not come back after undoing clear all",
+    );
+    await page.keyboard.press("Control+KeyY");
+    await page.waitForFunction(() => document.getElementById("photoCount")?.textContent?.trim() === "0");
 
     const mobilePage = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await mobilePage.goto(url, { waitUntil: "domcontentloaded" });
