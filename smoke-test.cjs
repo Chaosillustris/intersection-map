@@ -274,7 +274,7 @@ async function main() {
     assert(await page.locator("#exportButton").isDisabled(), "Export should start disabled");
     assert(await page.locator("#clearButton").isDisabled(), "Clear all should start disabled");
     assert(
-      /^1\.0\.3$/.test((await text(page.locator("#appVersionLabel"))).replace(/^v/i, "")),
+      (await text(page.locator("#appVersionLabel"))).replace(/^v/i, "") === require("./package.json").version,
       "Version label did not render",
     );
     assert(
