@@ -225,9 +225,15 @@ async function main() {
 
   const browser = await chromium.launch({ headless: true });
   const cspViolations = [];
+  // Uncaught exceptions and unhandled promise rejections on any page fail the run: a broken
+  // script can leave the page looking fine (static HTML) while features silently stop working.
+  const pageErrors = [];
   const openPage = browser.newPage.bind(browser);
   browser.newPage = async (...args) => {
     const created = await openPage(...args);
+    created.on("pageerror", (error) => {
+      pageErrors.push(`${error.name}: ${error.message}${error.stack ? `\n    ${error.stack.split("\n").slice(1, 3).join("\n    ")}` : ""}`);
+    });
     created.on("console", (message) => {
       if (/Content Security Policy/i.test(message.text())) cspViolations.push(message.text());
     });
@@ -737,9 +743,12 @@ async function main() {
     assert(await slowPage.locator("#loadingOverlay").getAttribute("aria-hidden") === "true", "Loading overlay should close after stopping");
     await slowPage.close();
 
+    assert(pageErrors.length === 0, `JavaScript errors on the page:\n${[...new Set(pageErrors)].join("\n")}`);
     assert(cspViolations.length === 0, `Content Security Policy blocked something:\n${[...new Set(cspViolations)].join("\n")}`);
     console.log("smoke-test: ok");
   } finally {
+    // When a page error makes an earlier step time out, show the real cause too.
+    if (pageErrors.length) console.error(`JavaScript errors seen on the page:\n${[...new Set(pageErrors)].join("\n")}`);
     await browser.close();
     await new Promise((resolve, reject) => {
       server.close((error) => {
