@@ -57,6 +57,12 @@ const elements = {
   loadingOverlay: document.getElementById("loadingOverlay"),
   loadingTitle: document.getElementById("loadingTitle"),
   loadingMeta: document.getElementById("loadingMeta"),
+  loadingHint: document.getElementById("loadingHint"),
+  loadingBar: document.getElementById("loadingBar"),
+  loadingBarDone: document.getElementById("loadingBarDone"),
+  loadingBarCurrent: document.getElementById("loadingBarCurrent"),
+  loadingThumbs: document.getElementById("loadingThumbs"),
+  stopUploadButton: document.getElementById("stopUploadButton"),
   photoCount: document.getElementById("photoCount"),
   anchorLabel: document.getElementById("anchorLabel"),
   gridButton: document.getElementById("gridButton"),
@@ -111,6 +117,11 @@ const state = {
     total: 0,
     processed: 0,
     currentFile: "",
+    currentIndex: 0,
+    fileStartedAt: 0,
+    stopRequested: false,
+    // The phone's photo picker can take a while to hand over files after it closes.
+    waitingForPicker: false,
   },
   failedFiles: [],
   layerDrag: {
@@ -144,6 +155,9 @@ function bindEvents() {
   bindFilePickerTrigger(elements.uploadButton);
   bindFilePickerTrigger(elements.dropOverlay);
   elements.fileInput.addEventListener("change", handleUpload);
+  elements.fileInput.addEventListener("click", startPickerWait);
+  elements.fileInput.addEventListener("cancel", stopPickerWait);
+  elements.stopUploadButton.addEventListener("click", requestUploadStop);
   elements.replaceInput.addEventListener("change", handleReplace);
   elements.retryButton?.addEventListener("click", retryFailedFiles);
   elements.undoButton.addEventListener("click", undo);
@@ -348,7 +362,40 @@ function handleControlInput() {
   );
 }
 
+let pickerWaitTimer = 0;
+
+function startPickerWait() {
+  if (state.upload.active) return;
+  window.clearTimeout(pickerWaitTimer);
+  state.upload.waitingForPicker = true;
+  renderWorkspaceClasses();
+  // Browsers without a "cancel" event never tell us the picker was dismissed; give up quietly.
+  pickerWaitTimer = window.setTimeout(stopPickerWait, 60000);
+  window.addEventListener("pointerdown", stopPickerWaitOnInteraction, { once: true, capture: true });
+}
+
+function stopPickerWaitOnInteraction(event) {
+  if (event.target === elements.fileInput) return;
+  stopPickerWait();
+}
+
+function stopPickerWait() {
+  window.clearTimeout(pickerWaitTimer);
+  window.removeEventListener("pointerdown", stopPickerWaitOnInteraction, { capture: true });
+  if (!state.upload.waitingForPicker) return;
+  state.upload.waitingForPicker = false;
+  renderWorkspaceClasses();
+}
+
+function requestUploadStop() {
+  if (!state.upload.active || state.upload.stopRequested) return;
+  state.upload.stopRequested = true;
+  renderUploadOverlay();
+  setStatus("Stopping after this image…", false);
+}
+
 async function handleUpload(event) {
+  stopPickerWait();
   const input = event.target;
   const files = Array.from(input.files || []);
   if (!files.length) return;
@@ -1481,12 +1528,17 @@ async function processIncomingFiles(selectedFiles, { isRetry = false } = {}) {
   const retryableFiles = [];
   const optimizedAssets = [];
   let recordedUpload = false;
+  let stoppedAt = -1;
 
   if (!isRetry) setFailedFiles([]);
   beginUploadProgress(files.length);
   await nextFrame();
   try {
     for (const [index, file] of files.entries()) {
+      if (state.upload.stopRequested) {
+        stoppedAt = index;
+        break;
+      }
       updateUploadProgress(index, files.length, file.name);
       await nextFrame();
       try {
@@ -1500,6 +1552,7 @@ async function processIncomingFiles(selectedFiles, { isRetry = false } = {}) {
         const tile = createTile(asset.id);
         state.tiles.push(tile);
         newTileIds.push(tile.id);
+        addLoadingThumb(asset);
         if (asset.optimized) {
           optimizedAssets.push(asset);
         }
@@ -1530,6 +1583,14 @@ async function processIncomingFiles(selectedFiles, { isRetry = false } = {}) {
   }
 
   const optimizationMessage = formatOptimizationStatus(optimizedAssets);
+  if (stoppedAt >= 0) {
+    const notAdded = files.length - stoppedAt;
+    setStatus(
+      `Stopped. Added ${newTileIds.length} image${newTileIds.length === 1 ? "" : "s"}, ${notAdded} not added.${failedFiles.length ? ` Could not open ${failedFiles.length}.` : ""}`,
+      false,
+    );
+    return;
+  }
   const skippedCount = skippedByType + failedFiles.length;
   if (skippedCount) {
     setStatus(
@@ -2040,18 +2101,13 @@ function renderWorkspaceClasses() {
   elements.workspace.classList.toggle("is-active-crop", state.cropMode);
   elements.workspace.classList.toggle("is-drop-target", state.isDropTarget);
   elements.workspace.classList.toggle("is-loading", state.upload.active);
+  elements.workspace.classList.toggle("is-waiting", state.upload.waitingForPicker && !state.upload.active);
   elements.workspaceNote.classList.toggle("is-crop", state.cropMode);
   elements.dropOverlay.classList.toggle(
     "is-hidden",
     state.upload.active || (state.tiles.length > 0 && !state.isDropTarget),
   );
-  elements.loadingOverlay.setAttribute("aria-hidden", String(!state.upload.active));
-  elements.loadingTitle.textContent = state.upload.active
-    ? `preparing images ${Math.min(state.upload.processed + 1, state.upload.total)} / ${state.upload.total}`
-    : "preparing images";
-  elements.loadingMeta.textContent = state.upload.active
-    ? formatLoadingFileLabel(state.upload.currentFile)
-    : "working…";
+  renderUploadOverlay();
   elements.workspaceNote.textContent = state.cropMode
     ? "Cropping: drag the image to reframe it. Scroll or press + − to zoom. Esc to finish."
     : "Click an image to select it. Double-click to crop.";
@@ -2725,11 +2781,65 @@ function clearDropTarget() {
   renderWorkspaceClasses();
 }
 
+let uploadTicker = 0;
+
+function renderUploadOverlay() {
+  const upload = state.upload;
+  const visible = upload.active || upload.waitingForPicker;
+  elements.loadingOverlay.setAttribute("aria-hidden", String(!visible));
+  elements.loadingBar.hidden = !upload.active;
+  // Only offer to stop while there is still something after the current image.
+  elements.stopUploadButton.hidden = !upload.active || upload.currentIndex >= upload.total - 1;
+  elements.stopUploadButton.disabled = upload.stopRequested;
+  elements.stopUploadButton.textContent = upload.stopRequested ? "stopping…" : "stop after this image";
+
+  if (!upload.active) {
+    elements.loadingTitle.textContent = upload.waitingForPicker ? "waiting for images" : "preparing images";
+    elements.loadingMeta.textContent = upload.waitingForPicker
+      ? "your device is handing them over, this can take a moment"
+      : "working…";
+    elements.loadingHint.hidden = true;
+    return;
+  }
+
+  const total = Math.max(1, upload.total);
+  const ready = Math.min(upload.processed, total);
+  elements.loadingTitle.textContent = `${ready} of ${total} done`;
+  elements.loadingBarDone.style.width = `${(ready / total) * 100}%`;
+  elements.loadingBarCurrent.style.left = `${(ready / total) * 100}%`;
+  elements.loadingBarCurrent.style.width = upload.currentFile ? `${100 / total}%` : "0";
+
+  const seconds = upload.fileStartedAt ? Math.floor((Date.now() - upload.fileStartedAt) / 1000) : 0;
+  const fileLabel = upload.currentFile
+    ? `now: ${formatLoadingFileLabel(upload.currentFile)}${seconds >= 2 ? ` · ${seconds}s` : ""}`
+    : "working…";
+  elements.loadingMeta.textContent = fileLabel;
+  elements.loadingHint.hidden = seconds < 6;
+  elements.loadingHint.textContent = "Large photos, especially HEIC from iPhone, can take up to half a minute each.";
+}
+
+function addLoadingThumb(asset) {
+  const thumb = document.createElement("img");
+  thumb.src = asset.url;
+  thumb.alt = "";
+  thumb.decoding = "async";
+  elements.loadingThumbs.append(thumb);
+  // Keep the strip to two short rows; the newest images matter most.
+  while (elements.loadingThumbs.children.length > 16) elements.loadingThumbs.firstElementChild.remove();
+  state.upload.processed = Math.min(state.upload.processed + 1, state.upload.total);
+  renderUploadOverlay();
+}
+
 function beginUploadProgress(total) {
   state.upload.active = true;
   state.upload.total = total;
   state.upload.processed = 0;
   state.upload.currentFile = "";
+  state.upload.currentIndex = 0;
+  state.upload.fileStartedAt = 0;
+  state.upload.stopRequested = false;
+  state.upload.waitingForPicker = false;
+  elements.loadingThumbs.replaceChildren();
   render();
   setStatus(`Preparing ${total} image${total === 1 ? "" : "s"}…`, false);
 }
@@ -2739,19 +2849,27 @@ function updateUploadProgress(index, total, fileName) {
   state.upload.total = total;
   state.upload.processed = index;
   state.upload.currentFile = fileName;
+  state.upload.currentIndex = index;
+  state.upload.fileStartedAt = Date.now();
+  // Restart the ticker for each image so its seconds count from that image's start.
+  window.clearInterval(uploadTicker);
+  uploadTicker = window.setInterval(renderUploadOverlay, 500);
   renderWorkspaceClasses();
   renderMeta();
-  setStatus(
-    `Loading ${index + 1} / ${total}… ${formatLoadingFileLabel(fileName)}`,
-    false,
-  );
+  if (!state.upload.stopRequested) {
+    setStatus(`Preparing image ${index + 1} of ${total}…`, false);
+  }
 }
 
 function endUploadProgress() {
+  window.clearInterval(uploadTicker);
   state.upload.active = false;
   state.upload.total = 0;
   state.upload.processed = 0;
   state.upload.currentFile = "";
+  state.upload.fileStartedAt = 0;
+  state.upload.stopRequested = false;
+  elements.loadingThumbs.replaceChildren();
   render();
 }
 

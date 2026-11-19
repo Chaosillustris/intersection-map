@@ -709,6 +709,34 @@ async function main() {
     await hiddenPage.waitForFunction(() => document.getElementById("photoCount")?.textContent === "2", null, { polling: 100, timeout: 5000 });
     await hiddenPage.close();
 
+    // Slow batches must show visible progress, finished thumbnails and a way to stop.
+    const slowPage = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    await slowPage.goto(url, { waitUntil: "domcontentloaded" });
+    await slowPage.evaluate(() => {
+      const input = document.getElementById("fileInput");
+      input.dispatchEvent(new MouseEvent("click"));
+      window.__waitingShown = document.getElementById("workspace").classList.contains("is-waiting");
+      input.dispatchEvent(new Event("cancel"));
+      window.__waitingCleared = !document.getElementById("workspace").classList.contains("is-waiting");
+      const realCreateAsset = window.createAsset;
+      window.createAsset = async (file) => {
+        await new Promise((resolve) => setTimeout(resolve, 3500));
+        return realCreateAsset(file);
+      };
+    });
+    assert(await slowPage.evaluate(() => window.__waitingShown && window.__waitingCleared), "Picker wait state should show on open and clear on cancel");
+    await slowPage.locator("#fileInput").setInputFiles([imageA, imageB, imageA]);
+    await slowPage.waitForFunction(() => document.getElementById("loadingTitle")?.textContent === "1 of 3 done", null, { timeout: 10000 });
+    assert(await slowPage.locator("#loadingThumbs img").count() === 1, "Finished image should appear as a thumbnail while the rest load");
+    assert(await slowPage.locator("#stopUploadButton").isVisible(), "Stop should be offered during a multi-image upload");
+    await slowPage.waitForFunction(() => /now: .* · \d+s/.test(document.getElementById("loadingMeta")?.textContent || ""), null, { timeout: 3200 });
+    await slowPage.click("#stopUploadButton");
+    assert(await text(slowPage.locator("#stopUploadButton")) === "stopping…", "Stop should confirm it was pressed");
+    await slowPage.waitForFunction(() => /^Stopped\./.test(document.getElementById("statusNote")?.textContent || ""), null, { timeout: 10000 });
+    assert(await text(slowPage.locator("#photoCount")) === "2", "Stop should keep the images prepared so far, including the one in progress");
+    assert(await slowPage.locator("#loadingOverlay").getAttribute("aria-hidden") === "true", "Loading overlay should close after stopping");
+    await slowPage.close();
+
     assert(cspViolations.length === 0, `Content Security Policy blocked something:\n${[...new Set(cspViolations)].join("\n")}`);
     console.log("smoke-test: ok");
   } finally {

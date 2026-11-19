@@ -826,8 +826,100 @@ input[type="range"]::-moz-range-thumb {
   transition: opacity 140ms ease;
 }
 
-.workspace.is-loading .loading-overlay {
+.workspace.is-loading .loading-overlay,
+.workspace.is-waiting .loading-overlay {
   opacity: 1;
+}
+
+.loading-bar {
+  position: relative;
+  width: min(240px, 70%);
+  height: 2px;
+  margin: var(--s-half) 0;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.loading-bar[hidden] {
+  display: none;
+}
+
+.loading-bar-done,
+.loading-bar-current {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  background: var(--text);
+  transition: width 200ms ease, left 200ms ease;
+}
+
+/* The image being prepared right now: a slow pulse so it is clear the page is still working. */
+.loading-bar-current {
+  opacity: 0.35;
+  animation: loading-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes loading-pulse {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-bar-current {
+    animation: none;
+  }
+}
+
+.loading-hint {
+  max-width: 260px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.loading-hint[hidden] {
+  display: none;
+}
+
+.loading-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--s-half);
+  max-width: 260px;
+  margin-top: var(--s-1);
+}
+
+.loading-thumbs:empty {
+  display: none;
+}
+
+.loading-thumbs img {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 2px;
+  background: var(--paper-alt);
+}
+
+.loading-stop {
+  margin-top: var(--s-1);
+  color: var(--muted);
+  font-size: 12px;
+  pointer-events: auto;
+}
+
+.loading-stop[hidden] {
+  display: none;
 }
 
 .loading-title,
@@ -1199,6 +1291,10 @@ input[type="range"]::-moz-range-thumb {
   }
 
   .about-toggle {
+    min-height: 40px;
+  }
+
+  .loading-stop {
     min-height: 40px;
   }
 }

@@ -115,9 +115,16 @@
                 <span class="drop-title">drop images here</span>
                 <span class="drop-meta">or click to browse</span>
               </label>
-              <div class="loading-overlay" id="loadingOverlay" aria-live="polite" aria-hidden="true">
+              <div class="loading-overlay" id="loadingOverlay" aria-hidden="true">
                 <p class="loading-title" id="loadingTitle">preparing images</p>
+                <div class="loading-bar" id="loadingBar" aria-hidden="true">
+                  <span class="loading-bar-done" id="loadingBarDone"></span>
+                  <span class="loading-bar-current" id="loadingBarCurrent"></span>
+                </div>
                 <p class="loading-meta" id="loadingMeta">working…</p>
+                <p class="loading-hint" id="loadingHint" hidden></p>
+                <div class="loading-thumbs" id="loadingThumbs" aria-hidden="true"></div>
+                <button class="text-action loading-stop" id="stopUploadButton" type="button" hidden>stop after this image</button>
               </div>
             </div>
           </div>
