@@ -1,5 +1,8 @@
 const storageKey = "intersection-map-settings-v1";
 const defaultCanvasSize = { width: 1600, height: 1200 };
+// On phones the field starts in the phone's own portrait format (9:16), so a composition
+// made on the phone fits its screen and stories.
+const phoneCanvasSize = { width: 1080, height: 1920 };
 const canvasSizeLimits = { min: 480, max: 6000 };
 const dragGranularity = 0.25;
 const imageOptimization = {
@@ -132,6 +135,8 @@ const state = {
   },
   pendingRefresh: false,
   canvas: getInitialCanvasSize(savedSettings),
+  // true once the user picks a field size; until then each device gets its own default.
+  canvasCustom: hasCustomCanvasSize(savedSettings),
   nextAssetId: 1,
   nextTileId: 1,
   gridIndex: savedSettings.gridIndex ?? 0,
@@ -241,6 +246,7 @@ function saveSettings() {
       gridIndex: state.gridIndex,
       canvasWidth: state.canvas.width,
       canvasHeight: state.canvas.height,
+      canvasCustom: state.canvasCustom,
     }),
   );
 }
@@ -285,10 +291,27 @@ function syncControlsFromState() {
   elements.airRange.value = state.controls.air;
 }
 
+function isPhoneScreen() {
+  return window.matchMedia("(pointer: coarse) and (max-width: 600px)").matches;
+}
+
+function getDefaultCanvasSize() {
+  return isPhoneScreen() ? phoneCanvasSize : defaultCanvasSize;
+}
+
+// Settings saved before canvasCustom existed always stored the size; only a size other than the
+// old default means the user actually chose it.
+function hasCustomCanvasSize(settings) {
+  if (typeof settings.canvasCustom === "boolean") return settings.canvasCustom;
+  if (settings.canvasWidth == null || settings.canvasHeight == null) return false;
+  return Number(settings.canvasWidth) !== defaultCanvasSize.width || Number(settings.canvasHeight) !== defaultCanvasSize.height;
+}
+
 function getInitialCanvasSize(settings) {
-  const width = Number(settings.canvasWidth ?? defaultCanvasSize.width);
-  const height = Number(settings.canvasHeight ?? defaultCanvasSize.height);
-  return sanitizeCanvasSize(width, height);
+  const size = hasCustomCanvasSize(settings)
+    ? { width: Number(settings.canvasWidth), height: Number(settings.canvasHeight) }
+    : getDefaultCanvasSize();
+  return sanitizeCanvasSize(size.width, size.height);
 }
 
 function syncCanvasInputs() {
@@ -323,6 +346,7 @@ function applyCanvasSize() {
 
   if (changed) {
     recordHistory("field size");
+    state.canvasCustom = true;
   }
   state.canvas = nextSize;
   clampTilesToGrid();
