@@ -134,6 +134,64 @@ body:not(.has-photos) .inspector,
   border-top: 1px solid var(--line);
 }
 
+.about {
+  margin-bottom: var(--s-2);
+}
+
+.about-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  min-height: 24px;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.about-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.about-toggle:hover,
+.about[open] .about-toggle {
+  color: var(--text);
+}
+
+.about-toggle:focus-visible {
+  outline: 1px solid var(--text);
+  outline-offset: var(--s-half);
+}
+
+.about-sign::before {
+  content: "+";
+  display: inline-block;
+  width: 1ch;
+  text-align: center;
+}
+
+.about[open] .about-sign::before {
+  content: "−";
+}
+
+.about-body {
+  max-width: 60ch;
+  padding-top: var(--s-1);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.about-body p {
+  margin: 0 0 var(--s-1);
+}
+
+.about-body p:last-child {
+  margin-bottom: 0;
+  color: var(--muted);
+}
+
 .version-tag {
   margin: 0;
   color: var(--muted);
@@ -1138,5 +1196,9 @@ input[type="range"]::-moz-range-thumb {
   .tile-handle[data-handle="xy"]::after {
     right: 12px;
     bottom: 12px;
+  }
+
+  .about-toggle {
+    min-height: 40px;
   }
 }
