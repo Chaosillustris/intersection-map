@@ -941,6 +941,11 @@ input[type="range"]::-moz-range-thumb {
   font-size: 13px;
 }
 
+.drop-meta {
+  max-width: 260px;
+  line-height: 1.5;
+}
+
 /* ---------- Tiles ---------- */
 
 .tile.is-selected {

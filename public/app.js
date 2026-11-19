@@ -2113,6 +2113,20 @@ function renderWorkspaceClasses() {
     : "Click an image to select it. Double-click to crop.";
 }
 
+function renderDropOverlayText() {
+  const title = elements.dropOverlay.querySelector(".drop-title");
+  const meta = elements.dropOverlay.querySelector(".drop-meta");
+  if (window.matchMedia("(pointer: coarse)").matches) {
+    // On phones the system photo picker stays open for a while after ✓ while it hands the files
+    // over; the site cannot draw over it, so say so before the picker opens.
+    title.textContent = "tap to choose images";
+    meta.textContent = "after you tap ✓, the phone needs a few seconds to hand them over";
+    return;
+  }
+  title.textContent = "drop images here";
+  meta.textContent = state.tiles.length ? "drop more images or click to browse" : "or click to browse";
+}
+
 function setStatus(message, isError = false) {
   elements.statusNote.textContent = message;
   elements.statusNote.classList.toggle("is-error", isError);
@@ -2129,9 +2143,7 @@ function renderMeta() {
   elements.photoCount.textContent = String(state.tiles.length);
   elements.layerCount.textContent = String(state.tiles.length);
   elements.anchorLabel.textContent = state.anchorId ? getTile(state.anchorId)?.label || "none" : "none";
-  elements.dropOverlay.querySelector(".drop-meta").textContent = state.tiles.length
-    ? "drop more images or click to browse"
-    : "or click to browse";
+  renderDropOverlayText();
 
   const actionsDisabled = state.upload.active || state.tiles.length === 0;
   elements.uploadButton.setAttribute("aria-disabled", String(state.upload.active));
