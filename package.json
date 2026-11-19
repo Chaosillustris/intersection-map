@@ -12,8 +12,6 @@
     "smoke": "node smoke-test.cjs"
   },
   "devDependencies": {
-    "heic-to": "^1.6.7",
-    "heic2any": "^0.0.4",
     "playwright": "^1.62.1",
     "wrangler": "^4.165.0"
   },
