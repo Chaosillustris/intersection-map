@@ -33,7 +33,25 @@ function getContentType(filePath) {
   }
 }
 
+// Headers from the "/*" block of _headers, so the smoke test runs under the real CSP.
+function readGlobalHeaders(rootDir) {
+  const headers = {};
+  let inGlobal = false;
+  for (const line of fs.readFileSync(path.join(rootDir, "_headers"), "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    if (!/^\s/.test(line)) {
+      inGlobal = line.trim() === "/*";
+      continue;
+    }
+    const separator = line.indexOf(":");
+    if (inGlobal && separator > 0) headers[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
+  }
+  delete headers["Strict-Transport-Security"];
+  return headers;
+}
+
 function startStaticServer(rootDir) {
+  const siteHeaders = readGlobalHeaders(rootDir);
   const server = http.createServer((request, response) => {
     const parsedUrl = new URL(request.url || "/", "http://127.0.0.1");
     const relativePath = decodeURIComponent(parsedUrl.pathname === "/" ? "/index.html" : parsedUrl.pathname);
@@ -52,7 +70,7 @@ function startStaticServer(rootDir) {
         return;
       }
 
-      response.writeHead(200, { "Content-Type": getContentType(resolvedPath) });
+      response.writeHead(200, { ...siteHeaders, "Content-Type": getContentType(resolvedPath) });
       response.end(buffer);
     });
   });
@@ -206,6 +224,15 @@ async function main() {
   const heicImage = path.join(rootDir, "tests", "fixtures", "sample.heic");
 
   const browser = await chromium.launch({ headless: true });
+  const cspViolations = [];
+  const openPage = browser.newPage.bind(browser);
+  browser.newPage = async (...args) => {
+    const created = await openPage(...args);
+    created.on("console", (message) => {
+      if (/Content Security Policy/i.test(message.text())) cspViolations.push(message.text());
+    });
+    return created;
+  };
   const page = await browser.newPage({ viewport: { width: 1440, height: 1200 } });
 
   try {
@@ -682,6 +709,7 @@ async function main() {
     await hiddenPage.waitForFunction(() => document.getElementById("photoCount")?.textContent === "2", null, { polling: 100, timeout: 5000 });
     await hiddenPage.close();
 
+    assert(cspViolations.length === 0, `Content Security Policy blocked something:\n${[...new Set(cspViolations)].join("\n")}`);
     console.log("smoke-test: ok");
   } finally {
     await browser.close();
