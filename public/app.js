@@ -48,6 +48,18 @@ const defaultControls = { density: 50, overlap: 50, variation: 50, air: 50 };
 const historyLimit = 40;
 const undoHistory = { undo: [], redo: [], mergeKey: null, mergedAt: 0 };
 const knownAssets = new Map();
+// Autosave: the composition and its prepared images live in this browser's IndexedDB, so a tab
+// that iOS reloads in the background (or an accidental refresh) does not lose the work.
+const autosaveConfig = { dbName: "intersection-map", dbVersion: 1, delayMs: 700 };
+let autosaveTimer = 0;
+let autosaveReady = false;
+let autosaveWarned = false;
+let autosaveDbPromise = null;
+const autosavedAssetIds = new Set();
+// An exported PNG waiting for a fresh tap when the browser refused to open the share sheet.
+let pendingShareFile = null;
+let autosaveAvailable = true;
+let autosaveChain = Promise.resolve();
 
 // Set only while a layout runs on the classic preset grid.
 let layoutGridOverride = null;
@@ -99,6 +111,8 @@ const elements = {
   undoButton: document.getElementById("undoButton"),
   redoButton: document.getElementById("redoButton"),
   replaceInput: document.getElementById("replaceInput"),
+  shareButton: document.getElementById("shareButton"),
+  formatPresets: Array.from(document.querySelectorAll(".format-preset")),
 };
 
 const runtimeVersion = getRuntimeVersion();
@@ -155,6 +169,7 @@ renderRuntimeVersion();
 updateUploadLabel();
 render();
 bindEvents();
+enqueueUpload(restoreAutosave);
 
 function bindEvents() {
   bindFilePickerTrigger(elements.uploadButton);
@@ -174,6 +189,18 @@ function bindEvents() {
   elements.gridButton.addEventListener("click", () => cycleGrid(1));
   elements.toneButton.addEventListener("click", cycleToneMode);
   elements.applyCanvasSizeButton.addEventListener("click", applyCanvasSize);
+  elements.formatPresets.forEach((button) => {
+    button.addEventListener("click", () => {
+      elements.canvasWidthInput.value = button.dataset.width;
+      elements.canvasHeightInput.value = button.dataset.height;
+      applyCanvasSize();
+    });
+  });
+  elements.shareButton.addEventListener("click", sharePendingExport);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushAutosave();
+  });
+  window.addEventListener("pagehide", flushAutosave);
   elements.densityRange.addEventListener("input", handleControlInput);
   elements.overlapRange.addEventListener("input", handleControlInput);
   elements.variationRange.addEventListener("input", handleControlInput);
@@ -347,6 +374,7 @@ function applyCanvasSize() {
   if (changed) {
     recordHistory("field size");
     state.canvasCustom = true;
+    if (state.tiles.length) state.pendingRefresh = true;
   }
   state.canvas = nextSize;
   clampTilesToGrid();
@@ -357,7 +385,7 @@ function applyCanvasSize() {
     clamped
       ? `Field size set to ${nextSize.width} × ${nextSize.height}px. Kept within the safe export range.`
       : changed
-        ? `Field size set to ${nextSize.width} × ${nextSize.height}px.`
+        ? `Field size set to ${nextSize.width} × ${nextSize.height}px.${state.tiles.length ? " Press arrange to fit the images." : ""}`
         : `Field size remains ${nextSize.width} × ${nextSize.height}px.`,
     false,
   );
@@ -535,6 +563,7 @@ async function createAsset(file) {
       resized: prepared.resized,
       originalByteSize: file.size,
       byteSize: prepared.blob.size,
+      blob: prepared.blob,
       tone: analyzeToneProfile(prepared.img),
     };
   } catch (error) {
@@ -2116,6 +2145,7 @@ function render() {
   renderSelectionOverlay();
   renderInspector();
   renderLayerStrip();
+  scheduleAutosave();
 }
 
 function renderWorkspaceClasses() {
@@ -2164,6 +2194,12 @@ function renderMeta() {
   elements.gridLabel.textContent = `${grid.cols} × ${grid.rows}`;
   elements.toneLabel.textContent = state.controls.tone;
   elements.canvasLabel.textContent = `${state.canvas.width} × ${state.canvas.height}`;
+  elements.formatPresets.forEach((button) => {
+    const active =
+      Number(button.dataset.width) === state.canvas.width && Number(button.dataset.height) === state.canvas.height;
+    button.setAttribute("aria-pressed", String(active));
+    button.disabled = state.upload.active;
+  });
   elements.photoCount.textContent = String(state.tiles.length);
   elements.layerCount.textContent = String(state.tiles.length);
   elements.anchorLabel.textContent = state.anchorId ? getTile(state.anchorId)?.label || "none" : "none";
@@ -2999,10 +3035,73 @@ async function exportComposition() {
     drawTileToCanvas(ctx, tile, asset, metrics);
   }
 
+  const fileName = `intersection-map-${state.canvas.width}x${state.canvas.height}.png`;
+  const blob = await canvasToBlob(canvas, "image/png");
+  canvas.width = 1;
+  canvas.height = 1;
+  if (!blob) {
+    setStatus("Could not create the image. Try a smaller field size.", true);
+    return;
+  }
+
+  setPendingShare(null);
+  const file = new File([blob], fileName, { type: "image/png" });
+  // On phones a download lands in Files; the share sheet offers "Save Image" to Photos instead.
+  if (prefersShareSheet() && navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file] });
+      setStatus("Image exported.", false);
+      return;
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        setStatus("Not saved. Press export png to try again.", false);
+        return;
+      }
+      if (error?.name === "NotAllowedError") {
+        // Preparing the image took long enough that the browser no longer counts it as a tap.
+        setPendingShare(file);
+        setStatus("Image ready.", false);
+        return;
+      }
+      console.warn("Share failed, downloading instead", error);
+    }
+  }
+
+  downloadBlob(blob, fileName);
+  setStatus(`Exported ${fileName}.`, false);
+}
+
+function prefersShareSheet() {
+  return window.matchMedia("(pointer: coarse)").matches && typeof navigator.share === "function";
+}
+
+function downloadBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.download = `intersection-map-${state.canvas.width}x${state.canvas.height}.png`;
-  link.href = canvas.toDataURL("image/png");
+  link.download = fileName;
+  link.href = url;
   link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+function setPendingShare(file) {
+  pendingShareFile = file;
+  elements.shareButton.hidden = !file;
+}
+
+async function sharePendingExport() {
+  const file = pendingShareFile;
+  if (!file) return;
+  try {
+    await navigator.share({ files: [file] });
+    setPendingShare(null);
+    setStatus("Image exported.", false);
+  } catch (error) {
+    if (error?.name === "AbortError") return;
+    setPendingShare(null);
+    downloadBlob(file, file.name);
+    setStatus(`Exported ${file.name}.`, false);
+  }
 }
 
 function drawTileToCanvas(ctx, tile, asset, metrics) {
@@ -3102,4 +3201,186 @@ function sample(list, count) {
     result.push(pool.splice(randomInt(0, pool.length - 1), 1)[0]);
   }
   return result;
+}
+
+/* ---------- Autosave ---------- */
+
+function openAutosaveDb() {
+  if (!("indexedDB" in window)) return Promise.reject(new Error("IndexedDB is not available"));
+  if (!autosaveDbPromise) {
+    autosaveDbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(autosaveConfig.dbName, autosaveConfig.dbVersion);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains("assets")) db.createObjectStore("assets", { keyPath: "id" });
+        if (!db.objectStoreNames.contains("composition")) db.createObjectStore("composition");
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+      request.onblocked = () => reject(new Error("IndexedDB is blocked by another tab"));
+    }).catch((error) => {
+      autosaveDbPromise = null;
+      throw error;
+    });
+  }
+  return autosaveDbPromise;
+}
+
+function idbRequest(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function idbTransactionDone(transaction) {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error || new Error("IndexedDB transaction aborted"));
+  });
+}
+
+function scheduleAutosave() {
+  if (!autosaveReady || !autosaveAvailable || state.upload.active) return;
+  window.clearTimeout(autosaveTimer);
+  autosaveTimer = window.setTimeout(saveAutosave, autosaveConfig.delayMs);
+}
+
+// The page is being hidden (app switch, tab close): write now instead of waiting for the timer.
+function flushAutosave() {
+  if (!autosaveTimer) return;
+  window.clearTimeout(autosaveTimer);
+  saveAutosave();
+}
+
+function saveAutosave() {
+  autosaveTimer = 0;
+  autosaveChain = autosaveChain.then(writeAutosave).catch(handleAutosaveError);
+  return autosaveChain;
+}
+
+async function writeAutosave() {
+  const db = await openAutosaveDb();
+  const usedIds = new Set(state.tiles.map((tile) => tile.assetId));
+  const assets = state.assets.filter((asset) => usedIds.has(asset.id));
+  const transaction = db.transaction(["assets", "composition"], "readwrite");
+  const assetStore = transaction.objectStore("assets");
+  const written = [];
+  for (const asset of assets) {
+    if (autosavedAssetIds.has(asset.id) || !asset.blob) continue;
+    assetStore.put({
+      id: asset.id,
+      blob: asset.blob,
+      name: asset.name,
+      optimized: asset.optimized,
+      resized: asset.resized,
+      originalByteSize: asset.originalByteSize,
+      byteSize: asset.byteSize,
+      tone: asset.tone,
+    });
+    written.push(asset.id);
+  }
+  const removed = [...autosavedAssetIds].filter((id) => !usedIds.has(id));
+  removed.forEach((id) => assetStore.delete(id));
+  transaction.objectStore("composition").put(
+    {
+      version: 1,
+      savedAt: Date.now(),
+      tiles: state.tiles.map((tile) => ({ ...tile })),
+      anchorId: state.anchorId,
+      gridIndex: state.gridIndex,
+      canvas: { ...state.canvas },
+      canvasCustom: state.canvasCustom,
+      nextAssetId: state.nextAssetId,
+      nextTileId: state.nextTileId,
+    },
+    "current",
+  );
+  await idbTransactionDone(transaction);
+  written.forEach((id) => autosavedAssetIds.add(id));
+  removed.forEach((id) => autosavedAssetIds.delete(id));
+}
+
+function handleAutosaveError(error) {
+  console.warn("Autosave failed", error);
+  const quota = error?.name === "QuotaExceededError" || /quota|space/i.test(error?.message || "");
+  if (quota && !autosaveWarned) {
+    autosaveWarned = true;
+    setStatus("This device is out of space, so the composition is no longer saved automatically. Export to keep it.", true);
+  }
+}
+
+async function restoreAutosave() {
+  try {
+    let db;
+    try {
+      db = await openAutosaveDb();
+    } catch (error) {
+      // Storage switched off (some private modes, in-app browsers): the editor still works.
+      autosaveAvailable = false;
+      console.warn("Autosave unavailable", error);
+      return;
+    }
+    const transaction = db.transaction(["assets", "composition"], "readonly");
+    const [saved, records] = await Promise.all([
+      idbRequest(transaction.objectStore("composition").get("current")),
+      idbRequest(transaction.objectStore("assets").getAll()),
+    ]);
+    records.forEach((record) => autosavedAssetIds.add(record.id));
+    if (!saved?.tiles?.length || state.tiles.length) return;
+
+    const assets = [];
+    for (const record of records) {
+      try {
+        const source = await loadImageSource(record.blob, record.name);
+        assets.push({
+          id: record.id,
+          name: record.name,
+          url: source.url,
+          img: source.img,
+          width: source.width,
+          height: source.height,
+          optimized: record.optimized,
+          resized: record.resized,
+          originalByteSize: record.originalByteSize,
+          byteSize: record.byteSize,
+          blob: record.blob,
+          tone: record.tone || analyzeToneProfile(source.img),
+        });
+      } catch (error) {
+        console.warn("Could not restore a saved image", record.name, error);
+      }
+    }
+    const restoredIds = new Set(assets.map((asset) => asset.id));
+    const tiles = saved.tiles.filter((tile) => restoredIds.has(tile.assetId));
+    if (!tiles.length) {
+      assets.forEach((asset) => URL.revokeObjectURL(asset.url));
+      return;
+    }
+
+    assets.forEach(registerAsset);
+    state.assets = assets;
+    state.tiles = tiles.map((tile) => ({ ...tile }));
+    state.anchorId = tiles.some((tile) => tile.id === saved.anchorId) ? saved.anchorId : null;
+    state.selectedId = null;
+    if (Number.isInteger(saved.gridIndex) && gridPresets[saved.gridIndex]) state.gridIndex = saved.gridIndex;
+    if (saved.canvas) {
+      state.canvas = sanitizeCanvasSize(Number(saved.canvas.width), Number(saved.canvas.height));
+      state.canvasCustom = Boolean(saved.canvasCustom);
+    }
+    state.nextAssetId = Math.max(state.nextAssetId, Number(saved.nextAssetId) || 0, ...assets.map((asset) => asset.id + 1));
+    state.nextTileId = Math.max(state.nextTileId, Number(saved.nextTileId) || 0, ...tiles.map((tile) => tile.id + 1));
+    syncCanvasInputs();
+    updateUploadLabel();
+    setStatus(
+      `Restored your last composition (${tiles.length} image${tiles.length === 1 ? "" : "s"}). Clear all to start over.`,
+      false,
+    );
+  } catch (error) {
+    console.warn("Autosave restore failed", error);
+  } finally {
+    autosaveReady = true;
+    render();
+  }
 }

@@ -743,6 +743,56 @@ async function main() {
     assert(await slowPage.locator("#loadingOverlay").getAttribute("aria-hidden") === "true", "Loading overlay should close after stopping");
     await slowPage.close();
 
+    // Phone flow: format buttons, export through the share sheet, autosave across a reload.
+    const phonePage = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    await phonePage.addInitScript(() => {
+      window.__shared = [];
+      window.__shareAttempts = 0;
+      navigator.canShare = () => true;
+      navigator.share = async (data) => {
+        window.__shareAttempts += 1;
+        if (window.__refuseFirstShare && window.__shareAttempts === 1) {
+          throw new DOMException("needs a fresh tap", "NotAllowedError");
+        }
+        window.__shared.push(data.files[0].name);
+      };
+    });
+    await phonePage.goto(url, { waitUntil: "domcontentloaded" });
+    assert(await text(phonePage.locator("#canvasLabel")) === "1080 × 1920", "Phones should start with a 9:16 field");
+    assert(await phonePage.locator('.format-preset[data-height="1920"]').getAttribute("aria-pressed") === "true", "9:16 should show as the current format");
+    await phonePage.locator("#fileInput").setInputFiles([imageA, imageB]);
+    await phonePage.waitForFunction(() => document.getElementById("photoCount")?.textContent === "2", null, { timeout: 10000 });
+    await phonePage.click('.format-preset[data-height="1350"]');
+    assert(await text(phonePage.locator("#canvasLabel")) === "1080 × 1350", "4:5 button should set the field size");
+    assert(await phonePage.locator('.format-preset[data-height="1350"]').getAttribute("aria-pressed") === "true", "4:5 should show as the current format");
+    assert(await phonePage.locator("#updateButton").evaluate((node) => node.classList.contains("cta")), "Changing the format should point to arrange");
+    await phonePage.click("#updateButton");
+
+    await phonePage.click("#exportButton");
+    await phonePage.waitForFunction(() => window.__shared.length === 1, null, { timeout: 10000 });
+    assert(await phonePage.evaluate(() => window.__shared[0]) === "intersection-map-1080x1350.png", "Phone export should go through the share sheet");
+    await phonePage.evaluate(() => { window.__refuseFirstShare = true; window.__shareAttempts = 0; });
+    await phonePage.click("#exportButton");
+    await phonePage.waitForFunction(() => !document.getElementById("shareButton").hidden, null, { timeout: 10000 });
+    await phonePage.click("#shareButton");
+    await phonePage.waitForFunction(() => window.__shared.length === 2, null, { timeout: 5000 });
+    assert(await phonePage.locator("#shareButton").isHidden(), "Share button should hide once used");
+
+    // Wait for the debounced autosave, then reload as iOS does with background tabs.
+    await phonePage.waitForTimeout(1200);
+    await phonePage.reload({ waitUntil: "domcontentloaded" });
+    await phonePage.waitForFunction(() => document.getElementById("photoCount")?.textContent === "2", null, { timeout: 10000 });
+    assert(/^Restored your last composition/.test(await text(phonePage.locator("#statusNote"))), "Reload should restore the composition");
+    assert(await text(phonePage.locator("#canvasLabel")) === "1080 × 1350", "Reload should restore the field size");
+    assert(await phonePage.locator(".tile img").count() === 2, "Restored tiles should show their images");
+    assert(await phonePage.locator(".tile img").first().evaluate((img) => img.complete && img.naturalWidth > 0), "Restored images should load");
+    await phonePage.click("#clearButton");
+    await phonePage.waitForTimeout(1200);
+    await phonePage.reload({ waitUntil: "domcontentloaded" });
+    await phonePage.waitForTimeout(800);
+    assert(await text(phonePage.locator("#photoCount")) === "0", "Clear all should also clear the saved composition");
+    await phonePage.close();
+
     assert(pageErrors.length === 0, `JavaScript errors on the page:\n${[...new Set(pageErrors)].join("\n")}`);
     assert(cspViolations.length === 0, `Content Security Policy blocked something:\n${[...new Set(cspViolations)].join("\n")}`);
     console.log("smoke-test: ok");
